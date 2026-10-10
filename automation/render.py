@@ -2,23 +2,25 @@
 """Lab compiler around AVD.  Two phases, both deterministic and committed:
 
   render.py pre    network/hosts.yml  -> generated/connected_endpoints.yml   (AVD input)
-  [AVD build]      network/ (inventory + group_vars) -> generated/intended/{structured_configs,configs}
-  render.py post   AVD structured configs + intent/{wan,hosts}.yml ->
-                     generated/lab/netops.clab.yml         nodes + cabling (from AVD peer/peer_interface)
-                     generated/lab/init-configs/*.cfg      minimal cEOS bootstrap (mgmt, eAPI, gNMI)
-                     generated/lab/gnmic/*.yml             gNMI targets + used-port filter
-                     generated/lab-inventory.yml           FRR WAN + workload hosts for Ansible
+  [AVD build]      network/ -> generated/intended/{structured_configs,configs}, generated/documentation
+  render.py post   AVD output + network/{wan,hosts}.yml -> containerlab/ (portable, self-contained bundle):
+                     netops.clab.yml            nodes, cabling, host addressing, TopoViewer layout
+                     configs/<switch>.cfg       full EOS startup config (= AVD intended config)
+                     configs/<router>.conf      full FRR config
+                     telemetry/gnmic/*.yml      gNMI targets + used-port filter
+                   and generated/lab-inventory.yml (FRR WAN + hosts, for make apply)
 """
 import ipaddress
 import pathlib
 import re
 import sys
 
+import jinja2
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-INTENT, BUILD, LAB_SRC = ROOT / "network", ROOT / "generated", ROOT / "lab"
-CLAB = BUILD / "lab"                      # generated containerlab files; paths in the topology are relative to it
+INTENT, BUILD, AUTOMATION = ROOT / "network", ROOT / "generated", ROOT / "automation"
+CLAB = ROOT / "containerlab"              # portable bundle: every path in netops.clab.yml is relative to it
 STRUCTURED = BUILD / "intended" / "structured_configs"
 LAB = "netops"
 CEOS_IMAGE = "ceos:4.36.2F"
@@ -57,6 +59,57 @@ def clab_port(itf: str) -> str:
 # superspine, dc-gw, spine, leaf, server, ...).
 CLAB_GROUP = {"wan": "superspine", "bgw": "dc-gw", "spine": "spine", "leaf": "leaf", "host": "server", "telemetry": "1"}
 
+# VS Code containerlab TopoViewer: graph-icon + graph-posX/Y labels.  Rows top to bottom, DC1 left, DC2 right.
+ICON = {"wan": "pe", "bgw": "dcgw", "spine": "spine", "leaf": "leaf", "host": "server", "telemetry": "controller"}
+ROW_Y = {"wan": 0, "bgw": 160, "spine": 320, "leaf": 480, "host": 640, "telemetry": 820}
+COL_W, DC_GAP = 170, 260
+
+
+def layout(nodes: dict, servers: dict) -> None:
+    """Place every node: each DC is a block of columns (one per leaf); hosts sit under their leaf."""
+    x0, dc_center = 0, {}
+    for site in sorted({n["labels"]["site"] for n in nodes.values() if n["labels"]["role"] == "leaf"}):
+        def members(role):
+            return sorted(k for k, n in nodes.items() if n["labels"] == {"site": site, "role": role})
+        leaves = members("leaf")
+        width = (len(leaves) - 1) * COL_W
+        for i, leaf in enumerate(leaves):
+            nodes[leaf]["pos"] = (x0 + i * COL_W, ROW_Y["leaf"])
+        for role in ("spine", "bgw"):                    # pairs spread over the DC width
+            row = members(role)
+            for i, name in enumerate(row):
+                x = width * (2 * i + 1) / (2 * len(row)) if width >= 2 * COL_W else i * COL_W
+                nodes[name]["pos"] = (x0 + x, ROW_Y[role])
+        dc_center[site] = x0 + width / 2
+        x0 += width + DC_GAP
+    for leaf in {s["switch"] for s in servers.values()}:
+        on_leaf = sorted(n for n, s in servers.items() if s["switch"] == leaf)
+        lx = nodes[leaf]["pos"][0]
+        for i, name in enumerate(on_leaf):
+            nodes[name]["pos"] = (lx + (i - (len(on_leaf) - 1) / 2) * 90, ROW_Y["host"])
+    mid = sum(dc_center.values()) / len(dc_center)
+    for role, names in (("wan", sorted(k for k, n in nodes.items() if n["labels"]["role"] == "wan")),
+                        ("telemetry", ["gnmic", "otelcol"])):
+        for i, name in enumerate(names):
+            nodes[name]["pos"] = (mid + (i - (len(names) - 1) / 2) * COL_W * 1.5, ROW_Y[role])
+    for n in nodes.values():
+        x, y = n.pop("pos")
+        n["labels"].update({"graph-icon": ICON[n["labels"]["role"]], "graph-posX": str(int(x)), "graph-posY": str(int(y))})
+
+
+def reset_viewer_positions() -> None:
+    """TopoViewer copies node positions into netops.clab.yml.annotations.json and then prefers them over
+    the YAML labels.  Drop those position-only entries so the YAML layout wins; keep anything else
+    (text, shapes, groups, styled nodes) a person added in the viewer."""
+    path = CLAB / "netops.clab.yml.annotations.json"
+    if not path.exists():
+        return
+    import json
+    data = json.loads(path.read_text())
+    layout_only = {"id", "position", "icon", "group", "level", "groupLabelPos"}
+    data["nodeAnnotations"] = [a for a in data.get("nodeAnnotations", []) if not set(a) <= layout_only]
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
 
 # --------------------------------------------------------------------------- pre
 def pre() -> None:
@@ -79,8 +132,6 @@ def post() -> None:
         sys.exit("no AVD structured configs — run the AVD build first")
     wan = load(INTENT / "wan.yml")
     hosts = load(INTENT / "hosts.yml")["hosts"]
-    fabric_vars = load(INTENT / "group_vars" / "FABRIC" / "management.yml")
-    admin_hash = next(u["sha512_password"] for u in fabric_vars["aaa_settings"]["local_users"] if u["name"] == "admin")
 
     links, wan_nodes, used_ports = set(), {}, {}
     for name, w in wan["routers"].items():
@@ -120,52 +171,63 @@ def post() -> None:
         servers[name] = {"ip": h["ip"], "gw": str(ipaddress.ip_interface(svi["ip_address_virtual"]).ip),
                          "switch": h["switch"], "switch_port": h["port"], "vlan": h["vlan"]}
 
-    # ---- containerlab topology
+    # ---- containerlab bundle: full startup configs, so `containerlab deploy` alone brings the network up
+    (CLAB / "configs").mkdir(parents=True, exist_ok=True)
+    frr_tpl = jinja2.Environment(loader=jinja2.FileSystemLoader(AUTOMATION / "templates"), trim_blocks=True,
+                                 keep_trailing_newline=True).get_template("frr.conf.j2")
     nodes = {}
     for dev, cfg in sc.items():
         mgmt = ipaddress.ip_interface(cfg["management_interfaces"][0]["ip_address"])
         meta = cfg.get("metadata", {})
         nodes[dev] = {"kind": "arista_ceos", "mgmt-ipv4": str(mgmt.ip),
-                      "startup-config": f"init-configs/{dev}.cfg",
+                      "startup-config": f"configs/{dev}.cfg",
                       "labels": {"site": meta.get("dc_name", "").lower(),
                                  "role": next((r for r in ("spine", "bgw", "leaf") if r in dev), "switch")}}
-        (CLAB / "init-configs").mkdir(parents=True, exist_ok=True)
-        (CLAB / "init-configs" / f"{dev}.cfg").write_text(BOOTSTRAP.format(
-            name=dev, mgmt=mgmt.with_prefixlen, gw=MGMT_GW, admin_hash=admin_hash))
+        (CLAB / "configs" / f"{dev}.cfg").write_text((BUILD / "intended" / "configs" / f"{dev}.cfg").read_text())
     for name, w in wan["routers"].items():
+        (CLAB / "configs" / f"{name}.conf").write_text(frr_tpl.render(node=wan_nodes[name]))
         nodes[name] = {"kind": "linux", "image": wan["image"], "mgmt-ipv4": w["mgmt_ip"],
                        "labels": {"site": "wan", "role": "wan"},
-                       "binds": ["../../lab/static/frr/daemons:/etc/frr/daemons:ro", "../../lab/static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro"]}
+                       "binds": [f"configs/{name}.conf:/etc/frr/frr.conf",
+                                 "static/frr/daemons:/etc/frr/daemons:ro",
+                                 "static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro"]}
     for name, s in servers.items():
-        nodes[name] = {"kind": "linux", "image": HOST_IMAGE, "labels": {"site": name.split("-")[0], "role": "host"}}
+        nodes[name] = {"kind": "linux", "image": HOST_IMAGE, "labels": {"site": name.split("-")[0], "role": "host"},
+                       "exec": ["ip link set eth1 up", f"ip address add {s['ip']} dev eth1",
+                                f"ip route replace 10.0.0.0/8 via {s['gw']} dev eth1"]}
     nodes["otelcol"] = {
         "kind": "linux", "image": "otel/opentelemetry-collector-contrib:0.162.0", "mgmt-ipv4": "172.20.20.250",
-        "labels": {"role": "telemetry"}, "binds": ["../../lab/telemetry/otelcol:/etc/otelcol:ro"],
-        "env-files": ["../../lab/telemetry/otelcol/elastic.env"],
-        "cmd": "--config /etc/otelcol/base.yml --config /etc/otelcol/extra.yml", "ports": ["9464:9464"]}
+        "labels": {"role": "telemetry"}, "binds": ["telemetry/otelcol:/etc/otelcol:ro"],
+        # OTELCOL_PROFILE=elastic (+ ELASTIC_OTLP_ENDPOINT, ELASTIC_API_KEY) at deploy time adds the Elastic export
+        "env": {"ELASTIC_OTLP_ENDPOINT": "${ELASTIC_OTLP_ENDPOINT:=not-set}", "ELASTIC_API_KEY": "${ELASTIC_API_KEY:=not-set}"},
+        "cmd": "--config /etc/otelcol/base.yml --config /etc/otelcol/${OTELCOL_PROFILE:=local}.yml",
+        "ports": ["9464:9464"]}
     nodes["gnmic"] = {
         "kind": "linux", "image": "ghcr.io/openconfig/gnmic:0.49.0", "mgmt-ipv4": "172.20.20.251",
-        "labels": {"role": "telemetry"}, "binds": ["gnmic:/etc/gnmic:ro"],
-        "env-files": ["../../lab/telemetry/gnmic/gnmic.env"], "cmd": "--config /etc/gnmic/gnmic.yml subscribe"}
+        "labels": {"role": "telemetry"}, "binds": ["telemetry/gnmic:/etc/gnmic:ro"],
+        "env": {"GNMIC_USERNAME": "${EOS_USER:=admin}", "GNMIC_PASSWORD": "${EOS_PASSWORD:=admin}"},
+        "cmd": "--config /etc/gnmic/gnmic.yml subscribe"}
     for n in nodes.values():
         n["group"] = CLAB_GROUP[n["labels"]["role"]]
+    layout(nodes, servers)
     topo = {"name": LAB,
             "mgmt": {"network": "clab-mgmt", "ipv4-subnet": "172.20.20.0/24"},
             "topology": {"kinds": {"arista_ceos": {
                              "image": CEOS_IMAGE, "enforce-startup-config": True,
                              # eth0 -> Management1, ethN -> EthernetN: same names as hardware / AVD cEOSLab profile
-                             "binds": ["../../lab/static/ceos/interface_mapping.json:/mnt/flash/EosIntfMapping.json:ro"]}},
+                             "binds": ["static/ceos/interface_mapping.json:/mnt/flash/EosIntfMapping.json:ro"]}},
                          "nodes": nodes,
                          "links": [{"endpoints": [f"{a}:{ap}", f"{b}:{bp}"]} for (a, ap), (b, bp) in sorted(links)]}}
-    dump(CLAB / "netops.clab.yml", topo)
+    dump(CLAB / "netops.clab.yml", topo, HEADER.replace("— do not edit", "— do not edit (deploy: containerlab deploy -t netops.clab.yml)"))
+    reset_viewer_positions()
 
     # ---- telemetry
     targets = {f"{nodes[d]['mgmt-ipv4']}:6030": {
         "name": d, "insecure": True,
         "event-tags": {"site": nodes[d]["labels"]["site"], "role": nodes[d]["labels"]["role"], "vendor": "arista"}}
         for d in sc}
-    dump(CLAB / "gnmic" / "targets.yml", targets)
-    gn = load(LAB_SRC / "telemetry" / "gnmic" / "gnmic.base.yml")
+    dump(CLAB / "telemetry" / "gnmic" / "targets.yml", targets)
+    gn = load(AUTOMATION / "telemetry" / "gnmic.base.yml")
     # drop interface series for ports a device doesn't use (cEOS exposes 16 Ethernet ports)
     unused = "\n  or ".join(
         f'(.tags.source == "{d}" and (.tags.interface_name | IN({", ".join(f'"{p}"' for p in ports)}) | not))'
@@ -173,7 +235,7 @@ def post() -> None:
     gn.setdefault("processors", {})["used-ports"] = {"event-drop": {
         "condition": f".tags.interface_name != null and (\n  {unused}\n)\n"}}
     gn["outputs"]["otel"]["event-processors"] = ["used-ports", *gn["outputs"]["otel"].get("event-processors", [])]
-    dump(CLAB / "gnmic" / "gnmic.yml", gn)
+    dump(CLAB / "telemetry" / "gnmic" / "gnmic.yml", gn)
 
     # ---- Ansible inventory for the non-Arista parts
     inv = {"all": {"children": {
@@ -185,42 +247,6 @@ def post() -> None:
     dump(BUILD / "lab-inventory.yml", inv)
     print(f"post: {len(sc)} cEOS, {len(wan_nodes)} WAN, {len(servers)} hosts, {len(links)} links")
 
-
-BOOTSTRAP = """! GENERATED by automation/render.py — minimal day-0 bootstrap; AVD replaces the full config on apply
-hostname {name}
-!
-no aaa root
-username admin privilege 15 role network-admin secret sha512 {admin_hash}
-!
-vrf instance MGMT
-!
-platform tfa
-   personality arfa
-!
-service routing protocols model multi-agent
-!
-management api http-commands
-   protocol https
-   no shutdown
-   !
-   vrf MGMT
-      no shutdown
-!
-management api gnmi
-   transport grpc default
-      vrf MGMT
-   provider eos-native
-!
-aaa authorization exec default local
-!
-interface Management1
-   vrf MGMT
-   ip address {mgmt}
-!
-ip route vrf MGMT 0.0.0.0/0 {gw}
-!
-end
-"""
 
 if __name__ == "__main__":
     {"pre": pre, "post": post}.get(sys.argv[1] if len(sys.argv) > 1 else "", lambda: sys.exit(__doc__))()

@@ -18,7 +18,7 @@ aaa_settings:
 management_eapi:
   enabled: true
 
-# --- gNMI on port 6030 in VRF MGMT: gnmic subscribes here (lab/telemetry/gnmic)
+# --- gNMI on port 6030 in VRF MGMT: gnmic subscribes here (containerlab/telemetry/gnmic)
 custom_structured_configuration_management_api_gnmi:
   provider: eos-native
   transport:

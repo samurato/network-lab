@@ -1,0 +1,24 @@
+# Profile `elastic`: merged on top of base.yml when deployed with OTELCOL_PROFILE=elastic.
+# ELASTIC_OTLP_ENDPOINT / ELASTIC_API_KEY come from the deploy environment (never committed).
+extensions:
+  file_storage/queue:
+    directory: /tmp
+
+exporters:
+  otlp_http/elastic:
+    endpoint: ${env:ELASTIC_OTLP_ENDPOINT}
+    headers:
+      Authorization: ApiKey ${env:ELASTIC_API_KEY}
+    sending_queue:
+      enabled: true
+      storage: file_storage/queue
+
+service:
+  extensions:
+    - file_storage/queue
+  pipelines:
+    metrics:
+      exporters:
+        - debug
+        - prometheus
+        - otlp_http/elastic

@@ -1,27 +1,9 @@
-# Declarative push to FRR: stage intended frr.conf, `frr-reload.py --test` for the diff,
-# `--reload` to converge (adds AND removes lines), then persist as /etc/frr/frr.conf.
-
-- name: Artefact dir
-  ansible.builtin.file:
-    path: "{{ playbook_dir }}/../../generated/frr"
-    state: directory
-    mode: "0755"
-  delegate_to: localhost
-  run_once: true
-  check_mode: false
-
-- name: Render intended config (review artifact, committed)
-  ansible.builtin.template:
-    src: frr.conf.j2
-    dest: "{{ playbook_dir }}/../../generated/frr/{{ inventory_hostname }}.conf"
-    mode: "0644"
-  delegate_to: localhost
-  check_mode: false
-  changed_when: false
+# Declarative push to FRR: stage containerlab/configs/<router>.conf (rendered by make build), `frr-reload.py --test` for the diff,
+# `--reload` to converge (adds AND removes lines).
 
 - name: Stage intended config in the router
-  ansible.builtin.template:
-    src: frr.conf.j2
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../containerlab/configs/{{ inventory_hostname }}.conf"
     dest: /etc/frr/frr.conf.intended
     mode: "0644"
   check_mode: false
@@ -56,9 +38,4 @@
   ansible.builtin.command: python3 /usr/lib/frr/frr-reload.py --reload /etc/frr/frr.conf.intended
   when: _test is changed and not ansible_check_mode
 
-- name: Persist as startup config
-  ansible.builtin.copy:
-    src: /etc/frr/frr.conf.intended
-    dest: /etc/frr/frr.conf
-    remote_src: true
-    mode: "0644"
+# /etc/frr/frr.conf is containerlab/configs/<router>.conf bind-mounted by the topology: already the intended config.

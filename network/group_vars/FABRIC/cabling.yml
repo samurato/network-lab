@@ -1,4 +1,4 @@
-# CABLING (switch side; the lab wiring in generated/lab/netops.clab.yml is generated from this)
+# CABLING (switch side; the lab wiring in containerlab/netops.clab.yml is generated from this)
 #
 #   cEOS port ethN == EthernetN.  Server ports are in ../hosts.yml.
 

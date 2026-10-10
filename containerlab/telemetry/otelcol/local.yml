@@ -1,0 +1,6 @@
+# Default profile (OTELCOL_PROFILE unset): telemetry stays in the lab, nothing is exported.
+# Deploy with OTELCOL_PROFILE=elastic ELASTIC_OTLP_ENDPOINT=... ELASTIC_API_KEY=... to load elastic.yml instead.
+service:
+  telemetry:
+    logs:
+      level: info

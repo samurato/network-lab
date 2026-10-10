@@ -1,9 +1,7 @@
 # secrets / runtime state
-lab/telemetry/otelcol/elastic.env
-lab/telemetry/otelcol/extra.yml
-lab/telemetry/gnmic/gnmic.env
+automation/elastic.env
+containerlab/*.annotations.json
 generated/config_backup/
-generated/lab/*.annotations.json
 clab-*/
 __pycache__/
 *.retry
