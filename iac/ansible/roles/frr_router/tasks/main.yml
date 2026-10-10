@@ -42,11 +42,14 @@
   check_mode: false
   changed_when: _delta | length > 0
   vars:
-    _delta: "{{ _test.stdout_lines | reject('match', '^(Lines To (Delete|Add)|=+|\\s*)$') | list }}"
+    _noise: '^(Lines To (Delete|Add)|=+|\s*)$'     # frr-reload headers and blank lines
+    _delta: "{{ _test.stdout_lines | reject('match', _noise) | list }}"
 
 - name: Show device diff
   ansible.builtin.debug:
-    msg: "{{ _test.stdout_lines | reject('match', '^\\s*$') | list }}"
+    msg: "{{ _test.stdout_lines | reject('match', _blank) | list }}"
+  vars:
+    _blank: '^\s*$'
   when: _test is changed and (ansible_diff_mode or ansible_check_mode)
 
 - name: Converge running config

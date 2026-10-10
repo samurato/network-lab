@@ -2,11 +2,13 @@
 receivers:
   otlp:
     protocols:
-      grpc: {endpoint: 0.0.0.0:4317}
-      http: {endpoint: 0.0.0.0:4318}
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
 
 processors:
-  batch: {}
+  batch:
   transform/contract:            # data contract: every signal carries device + lab
     metric_statements:
       - context: resource
@@ -15,14 +17,21 @@ processors:
           - set(attributes["lab"], "netops")
 
 exporters:
-  debug: {verbosity: basic}
+  debug:
+    verbosity: basic
   prometheus:                    # local sanity check: curl localhost:9464/metrics
     endpoint: 0.0.0.0:9464
-    resource_to_telemetry_conversion: {enabled: true}
+    resource_to_telemetry_conversion:
+      enabled: true
 
 service:
   pipelines:
     metrics:
-      receivers: [otlp]
-      processors: [transform/contract, batch]
-      exporters: [debug, prometheus]
+      receivers:
+        - otlp
+      processors:
+        - transform/contract
+        - batch
+      exporters:
+        - debug
+        - prometheus

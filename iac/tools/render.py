@@ -10,7 +10,6 @@
                      iac/build/lab-inventory.yml           FRR WAN + workload hosts for Ansible
 """
 import ipaddress
-import json
 import pathlib
 import re
 import sys
@@ -31,9 +30,20 @@ def load(path: pathlib.Path):
     return yaml.safe_load(path.read_text())
 
 
+class BlockDumper(yaml.SafeDumper):
+    """Plain block YAML: list items indented under their key, multi-line strings as `|` blocks."""
+
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
+
+
+BlockDumper.add_representer(str, lambda d, s: d.represent_scalar(
+    "tag:yaml.org,2002:str", s, style="|" if "\n" in s else None))
+
+
 def dump(path: pathlib.Path, data, header: str = HEADER) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(header + yaml.safe_dump(data, sort_keys=False, width=1000))
+    path.write_text(header + yaml.dump(data, Dumper=BlockDumper, sort_keys=False, width=1000, allow_unicode=True))
 
 
 def clab_port(itf: str) -> str:
@@ -155,9 +165,12 @@ def post() -> None:
         for d in sc}
     dump(CLAB / "telemetry" / "gnmic" / "targets.yml", targets)
     gn = load(CLAB / "telemetry" / "gnmic" / "gnmic.base.yml")
-    gn.setdefault("processors", {})["used-ports"] = {"event-drop": {"condition": (
-        ".tags.interface_name != null and (.tags.interface_name as $i "
-        f"| ({json.dumps(used_ports, separators=(',', ':'))}[.tags.source] // []) | index([$i]) == null)")}}
+    # drop interface series for ports a device doesn't use (cEOS exposes 16 Ethernet ports)
+    unused = "\n  or ".join(
+        f'(.tags.source == "{d}" and (.tags.interface_name | IN({", ".join(f'"{p}"' for p in ports)}) | not))'
+        for d, ports in used_ports.items())
+    gn.setdefault("processors", {})["used-ports"] = {"event-drop": {
+        "condition": f".tags.interface_name != null and (\n  {unused}\n)\n"}}
     gn["outputs"]["otel"]["event-processors"] = ["used-ports", *gn["outputs"]["otel"].get("event-processors", [])]
     dump(CLAB / "telemetry" / "gnmic" / "gnmic.yml", gn)
 

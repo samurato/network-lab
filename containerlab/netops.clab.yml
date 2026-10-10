@@ -9,7 +9,7 @@ topology:
       image: ceos:4.36.2F
       enforce-startup-config: true
       binds:
-      - static/ceos/interface_mapping.json:/mnt/flash/EosIntfMapping.json:ro
+        - static/ceos/interface_mapping.json:/mnt/flash/EosIntfMapping.json:ro
   nodes:
     dc1-bgw1:
       kind: arista_ceos
@@ -131,8 +131,8 @@ topology:
         site: wan
         role: wan
       binds:
-      - static/frr/daemons:/etc/frr/daemons:ro
-      - static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+        - static/frr/daemons:/etc/frr/daemons:ro
+        - static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
       group: superspine
     wan2:
       kind: linux
@@ -142,8 +142,8 @@ topology:
         site: wan
         role: wan
       binds:
-      - static/frr/daemons:/etc/frr/daemons:ro
-      - static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+        - static/frr/daemons:/etc/frr/daemons:ro
+        - static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
       group: superspine
     dc1-web1:
       kind: linux
@@ -208,12 +208,12 @@ topology:
       labels:
         role: telemetry
       binds:
-      - telemetry/otelcol:/etc/otelcol:ro
+        - telemetry/otelcol:/etc/otelcol:ro
       env-files:
-      - telemetry/otelcol/elastic.env
+        - telemetry/otelcol/elastic.env
       cmd: --config /etc/otelcol/base.yml --config /etc/otelcol/extra.yml
       ports:
-      - 9464:9464
+        - 9464:9464
       group: '1'
     gnmic:
       kind: linux
@@ -222,120 +222,120 @@ topology:
       labels:
         role: telemetry
       binds:
-      - telemetry/gnmic:/etc/gnmic:ro
+        - telemetry/gnmic:/etc/gnmic:ro
       env-files:
-      - telemetry/gnmic/gnmic.env
+        - telemetry/gnmic/gnmic.env
       cmd: --config /etc/gnmic/gnmic.yml subscribe
       group: '1'
   links:
-  - endpoints:
-    - dc1-app1:eth1
-    - dc1-leaf3:eth5
-  - endpoints:
-    - dc1-app2:eth1
-    - dc1-leaf4:eth5
-  - endpoints:
-    - dc1-bgw1:eth1
-    - dc1-spine1:eth5
-  - endpoints:
-    - dc1-bgw1:eth2
-    - dc1-spine2:eth5
-  - endpoints:
-    - dc1-bgw1:eth3
-    - wan1:eth1
-  - endpoints:
-    - dc1-bgw1:eth4
-    - wan2:eth1
-  - endpoints:
-    - dc1-bgw2:eth1
-    - dc1-spine1:eth6
-  - endpoints:
-    - dc1-bgw2:eth2
-    - dc1-spine2:eth6
-  - endpoints:
-    - dc1-bgw2:eth3
-    - wan1:eth2
-  - endpoints:
-    - dc1-bgw2:eth4
-    - wan2:eth2
-  - endpoints:
-    - dc1-leaf1:eth1
-    - dc1-spine1:eth1
-  - endpoints:
-    - dc1-leaf1:eth2
-    - dc1-spine2:eth1
-  - endpoints:
-    - dc1-leaf1:eth5
-    - dc1-web1:eth1
-  - endpoints:
-    - dc1-leaf2:eth1
-    - dc1-spine1:eth2
-  - endpoints:
-    - dc1-leaf2:eth2
-    - dc1-spine2:eth2
-  - endpoints:
-    - dc1-leaf2:eth5
-    - dc1-web2:eth1
-  - endpoints:
-    - dc1-leaf2:eth6
-    - dc1-stretch1:eth1
-  - endpoints:
-    - dc1-leaf3:eth1
-    - dc1-spine1:eth3
-  - endpoints:
-    - dc1-leaf3:eth2
-    - dc1-spine2:eth3
-  - endpoints:
-    - dc1-leaf4:eth1
-    - dc1-spine1:eth4
-  - endpoints:
-    - dc1-leaf4:eth2
-    - dc1-spine2:eth4
-  - endpoints:
-    - dc2-bgw1:eth1
-    - dc2-spine1:eth5
-  - endpoints:
-    - dc2-bgw1:eth2
-    - dc2-spine2:eth5
-  - endpoints:
-    - dc2-bgw1:eth3
-    - wan1:eth3
-  - endpoints:
-    - dc2-bgw1:eth4
-    - wan2:eth3
-  - endpoints:
-    - dc2-bgw2:eth1
-    - dc2-spine1:eth6
-  - endpoints:
-    - dc2-bgw2:eth2
-    - dc2-spine2:eth6
-  - endpoints:
-    - dc2-bgw2:eth3
-    - wan1:eth4
-  - endpoints:
-    - dc2-bgw2:eth4
-    - wan2:eth4
-  - endpoints:
-    - dc2-db1:eth1
-    - dc2-leaf1:eth5
-  - endpoints:
-    - dc2-db2:eth1
-    - dc2-leaf2:eth5
-  - endpoints:
-    - dc2-leaf1:eth1
-    - dc2-spine1:eth1
-  - endpoints:
-    - dc2-leaf1:eth2
-    - dc2-spine2:eth1
-  - endpoints:
-    - dc2-leaf2:eth1
-    - dc2-spine1:eth2
-  - endpoints:
-    - dc2-leaf2:eth2
-    - dc2-spine2:eth2
-  - endpoints:
-    - dc2-leaf2:eth6
-    - dc2-stretch1:eth1
-  - endpoints:
-    - wan1:eth5
-    - wan2:eth5
+    - endpoints:
+        - dc1-app1:eth1
+        - dc1-leaf3:eth5
+    - endpoints:
+        - dc1-app2:eth1
+        - dc1-leaf4:eth5
+    - endpoints:
+        - dc1-bgw1:eth1
+        - dc1-spine1:eth5
+    - endpoints:
+        - dc1-bgw1:eth2
+        - dc1-spine2:eth5
+    - endpoints:
+        - dc1-bgw1:eth3
+        - wan1:eth1
+    - endpoints:
+        - dc1-bgw1:eth4
+        - wan2:eth1
+    - endpoints:
+        - dc1-bgw2:eth1
+        - dc1-spine1:eth6
+    - endpoints:
+        - dc1-bgw2:eth2
+        - dc1-spine2:eth6
+    - endpoints:
+        - dc1-bgw2:eth3
+        - wan1:eth2
+    - endpoints:
+        - dc1-bgw2:eth4
+        - wan2:eth2
+    - endpoints:
+        - dc1-leaf1:eth1
+        - dc1-spine1:eth1
+    - endpoints:
+        - dc1-leaf1:eth2
+        - dc1-spine2:eth1
+    - endpoints:
+        - dc1-leaf1:eth5
+        - dc1-web1:eth1
+    - endpoints:
+        - dc1-leaf2:eth1
+        - dc1-spine1:eth2
+    - endpoints:
+        - dc1-leaf2:eth2
+        - dc1-spine2:eth2
+    - endpoints:
+        - dc1-leaf2:eth5
+        - dc1-web2:eth1
+    - endpoints:
+        - dc1-leaf2:eth6
+        - dc1-stretch1:eth1
+    - endpoints:
+        - dc1-leaf3:eth1
+        - dc1-spine1:eth3
+    - endpoints:
+        - dc1-leaf3:eth2
+        - dc1-spine2:eth3
+    - endpoints:
+        - dc1-leaf4:eth1
+        - dc1-spine1:eth4
+    - endpoints:
+        - dc1-leaf4:eth2
+        - dc1-spine2:eth4
+    - endpoints:
+        - dc2-bgw1:eth1
+        - dc2-spine1:eth5
+    - endpoints:
+        - dc2-bgw1:eth2
+        - dc2-spine2:eth5
+    - endpoints:
+        - dc2-bgw1:eth3
+        - wan1:eth3
+    - endpoints:
+        - dc2-bgw1:eth4
+        - wan2:eth3
+    - endpoints:
+        - dc2-bgw2:eth1
+        - dc2-spine1:eth6
+    - endpoints:
+        - dc2-bgw2:eth2
+        - dc2-spine2:eth6
+    - endpoints:
+        - dc2-bgw2:eth3
+        - wan1:eth4
+    - endpoints:
+        - dc2-bgw2:eth4
+        - wan2:eth4
+    - endpoints:
+        - dc2-db1:eth1
+        - dc2-leaf1:eth5
+    - endpoints:
+        - dc2-db2:eth1
+        - dc2-leaf2:eth5
+    - endpoints:
+        - dc2-leaf1:eth1
+        - dc2-spine1:eth1
+    - endpoints:
+        - dc2-leaf1:eth2
+        - dc2-spine2:eth1
+    - endpoints:
+        - dc2-leaf2:eth1
+        - dc2-spine1:eth2
+    - endpoints:
+        - dc2-leaf2:eth2
+        - dc2-spine2:eth2
+    - endpoints:
+        - dc2-leaf2:eth6
+        - dc2-stretch1:eth1
+    - endpoints:
+        - wan1:eth5
+        - wan2:eth5

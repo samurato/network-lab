@@ -13,36 +13,36 @@ all:
             asn: 64901
             loopback: 10.255.255.1
             p2p:
-            - name: eth1
-              ip: 10.255.0.1/31
-              peer: dc1-bgw1
-              peer_port: Ethernet3
-              peer_ip: 10.255.0.0
-              peer_asn: 65100
-            - name: eth2
-              ip: 10.255.0.3/31
-              peer: dc1-bgw2
-              peer_port: Ethernet3
-              peer_ip: 10.255.0.2
-              peer_asn: 65100
-            - name: eth3
-              ip: 10.255.0.5/31
-              peer: dc2-bgw1
-              peer_port: Ethernet3
-              peer_ip: 10.255.0.4
-              peer_asn: 65200
-            - name: eth4
-              ip: 10.255.0.7/31
-              peer: dc2-bgw2
-              peer_port: Ethernet3
-              peer_ip: 10.255.0.6
-              peer_asn: 65200
-            - name: eth5
-              ip: 10.255.1.0/31
-              peer: wan2
-              peer_port: eth5
-              peer_ip: 10.255.1.1
-              peer_asn: 64902
+              - name: eth1
+                ip: 10.255.0.1/31
+                peer: dc1-bgw1
+                peer_port: Ethernet3
+                peer_ip: 10.255.0.0
+                peer_asn: 65100
+              - name: eth2
+                ip: 10.255.0.3/31
+                peer: dc1-bgw2
+                peer_port: Ethernet3
+                peer_ip: 10.255.0.2
+                peer_asn: 65100
+              - name: eth3
+                ip: 10.255.0.5/31
+                peer: dc2-bgw1
+                peer_port: Ethernet3
+                peer_ip: 10.255.0.4
+                peer_asn: 65200
+              - name: eth4
+                ip: 10.255.0.7/31
+                peer: dc2-bgw2
+                peer_port: Ethernet3
+                peer_ip: 10.255.0.6
+                peer_asn: 65200
+              - name: eth5
+                ip: 10.255.1.0/31
+                peer: wan2
+                peer_port: eth5
+                peer_ip: 10.255.1.1
+                peer_asn: 64902
             src: wan.yml
         wan2:
           ansible_host: clab-netops-wan2
@@ -51,36 +51,36 @@ all:
             asn: 64902
             loopback: 10.255.255.2
             p2p:
-            - name: eth1
-              ip: 10.255.0.9/31
-              peer: dc1-bgw1
-              peer_port: Ethernet4
-              peer_ip: 10.255.0.8
-              peer_asn: 65100
-            - name: eth2
-              ip: 10.255.0.11/31
-              peer: dc1-bgw2
-              peer_port: Ethernet4
-              peer_ip: 10.255.0.10
-              peer_asn: 65100
-            - name: eth3
-              ip: 10.255.0.13/31
-              peer: dc2-bgw1
-              peer_port: Ethernet4
-              peer_ip: 10.255.0.12
-              peer_asn: 65200
-            - name: eth4
-              ip: 10.255.0.15/31
-              peer: dc2-bgw2
-              peer_port: Ethernet4
-              peer_ip: 10.255.0.14
-              peer_asn: 65200
-            - name: eth5
-              ip: 10.255.1.1/31
-              peer: wan1
-              peer_port: eth5
-              peer_ip: 10.255.1.0
-              peer_asn: 64901
+              - name: eth1
+                ip: 10.255.0.9/31
+                peer: dc1-bgw1
+                peer_port: Ethernet4
+                peer_ip: 10.255.0.8
+                peer_asn: 65100
+              - name: eth2
+                ip: 10.255.0.11/31
+                peer: dc1-bgw2
+                peer_port: Ethernet4
+                peer_ip: 10.255.0.10
+                peer_asn: 65100
+              - name: eth3
+                ip: 10.255.0.13/31
+                peer: dc2-bgw1
+                peer_port: Ethernet4
+                peer_ip: 10.255.0.12
+                peer_asn: 65200
+              - name: eth4
+                ip: 10.255.0.15/31
+                peer: dc2-bgw2
+                peer_port: Ethernet4
+                peer_ip: 10.255.0.14
+                peer_asn: 65200
+              - name: eth5
+                ip: 10.255.1.1/31
+                peer: wan1
+                peer_port: eth5
+                peer_ip: 10.255.1.0
+                peer_asn: 64901
             src: wan.yml
     SERVERS:
       vars:

@@ -12,7 +12,7 @@ aaa_settings:
     - name: admin
       privilege: 15
       role: network-admin
-      sha512_password: "$6$1yhH1WS8WkcVeAPu$k56vaTChE1oj5UfsfHE79tAY7LNGwb7baQ9Zm7qzygUqGJIC40/uVsQHBoYfOjg7emTdLFo0OTdC77nRiv9Mn/"
+      sha512_password: $6$1yhH1WS8WkcVeAPu$k56vaTChE1oj5UfsfHE79tAY7LNGwb7baQ9Zm7qzygUqGJIC40/uVsQHBoYfOjg7emTdLFo0OTdC77nRiv9Mn/
 
 # --- eAPI: how Ansible pushes config
 management_eapi:

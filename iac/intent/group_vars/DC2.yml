@@ -72,11 +72,11 @@ l3leaf:
         all_active_multihoming:
           enabled: true
           enable_d_path: true
-          evpn_domain_id_local: "2:2"
+          evpn_domain_id_local: "2:2"     # quoted: unquoted 1:1 is a base-60 number in YAML 1.1
           evpn_domain_id_remote: "1:1"
           evpn_ethernet_segment:
-            identifier: "0000:0000:0002:0002:0002"
-            rt_import: "00:00:00:02:00:02"
+            identifier: 0000:0000:0002:0002:0002
+            rt_import: 00:00:00:02:00:02
       structured_config:          # peer group for the WAN eBGP sessions (neighbors per gateway below)
         router_bgp:
           peer_groups:
@@ -96,11 +96,11 @@ l3leaf:
               neighbors:              # eBGP to the WAN routers (links in FABRIC/cabling.yml)
                 - ip_address: 10.255.0.5
                   peer_group: WAN-PEERS
-                  remote_as: "64901"
+                  remote_as: 64901
                   description: wan1
                 - ip_address: 10.255.0.13
                   peer_group: WAN-PEERS
-                  remote_as: "64902"
+                  remote_as: 64902
                   description: wan2
               address_family_ipv4:
                 networks:             # own loopbacks, advertised to the other DC via the WAN
@@ -114,11 +114,11 @@ l3leaf:
               neighbors:              # eBGP to the WAN routers (links in FABRIC/cabling.yml)
                 - ip_address: 10.255.0.7
                   peer_group: WAN-PEERS
-                  remote_as: "64901"
+                  remote_as: 64901
                   description: wan1
                 - ip_address: 10.255.0.15
                   peer_group: WAN-PEERS
-                  remote_as: "64902"
+                  remote_as: 64902
                   description: wan2
               address_family_ipv4:
                 networks:             # own loopbacks, advertised to the other DC via the WAN
