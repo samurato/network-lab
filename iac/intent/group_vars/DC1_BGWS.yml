@@ -1,0 +1,36 @@
+# EVPN Gateways (border gateways): terminate DC1's EVPN domain and re-originate
+# RT2/RT5 towards DC2's gateways (next-hop-self) — DC1 leaves only ever see local VTEPs.
+type: l3leaf
+l3leaf:
+  defaults:
+    platform: cEOSLab
+    loopback_ipv4_pool: 10.1.0.0/24
+    loopback_ipv4_offset: 10
+    vtep_loopback_ipv4_pool: 10.1.1.0/24
+    uplink_switches: [dc1-spine1, dc1-spine2]
+    uplink_ipv4_pool: 10.1.255.0/24
+    virtual_router_mac_address: 00:1c:73:00:00:01
+    spanning_tree_mode: mstp
+    filter: {tags: [stretch]}
+    mlag: false                       # I-ES all-active instead of MLAG
+    evpn_gateway:
+      evpn_l2: {enabled: true}
+      evpn_l3: {enabled: true, inter_domain: true}
+      # RFC 9014 Interconnect ES: both gateways of this DC share one I-ESI; DF election lets only
+      # one gateway forward BUM per VLAN, so stretched-L2 floods can't loop between the DCs.
+      all_active_multihoming:
+        enabled: true
+        enable_d_path: true
+        evpn_domain_id_local: "1:1"
+        evpn_domain_id_remote: "2:2"
+        evpn_ethernet_segment:
+          identifier: "0000:0000:0001:0001:0001"
+          rt_import: "00:00:00:01:00:01"
+      remote_peers:
+        - hostname: dc2-bgw1
+        - hostname: dc2-bgw2
+  node_groups:
+    - group: DC1_BGWS
+      nodes:
+        - {name: dc1-bgw1, id: 5, bgp_as: "65105", mgmt_ip: 172.20.20.17/24}
+        - {name: dc1-bgw2, id: 6, bgp_as: "65106", mgmt_ip: 172.20.20.18/24}

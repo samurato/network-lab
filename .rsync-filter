@@ -1,0 +1,10 @@
+# local -> host sync: never delete what the host generates or holds secrets in
+- .git/
+- iac/build/
+- containerlab/netops.clab.yml
+- containerlab/init-configs/
+- containerlab/telemetry/gnmic/gnmic.yml
+- containerlab/telemetry/gnmic/targets.yml
+- containerlab/telemetry/gnmic/gnmic.env
+- containerlab/telemetry/otelcol/elastic.env
+- containerlab/telemetry/otelcol/extra.yml

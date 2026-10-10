@@ -1,0 +1,39 @@
+# Merge to main == deploy.  Converge the lab to main, verify, record the change for the Auto-SRE agent.
+name: deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: netops-lab
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: [self-hosted, netops-lab]
+    env:
+      EOS_USER: ${{ secrets.EOS_USER }}
+      EOS_PASSWORD: ${{ secrets.EOS_PASSWORD }}
+      ELASTIC_ES_URL: ${{ secrets.ELASTIC_ES_URL }}
+      ELASTIC_API_KEY: ${{ secrets.ELASTIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Build and check generated files are committed
+        run: make check-build
+      - name: Re-wire the lab if the topology changed
+        run: |
+          if git diff --quiet HEAD~1 HEAD -- containerlab/netops.clab.yml containerlab/init-configs; then
+            echo "topology unchanged"
+          else
+            make secrets && containerlab/lab redeploy
+          fi
+      - name: Apply (EOS config-replace, FRR reload, hosts)
+        run: set -o pipefail; make apply 2>&1 | tee apply.log
+      - name: Verify
+        run: containerlab/verify.sh --wait 420
+      - name: Record change event
+        if: always()
+        run: iac/tools/change-event.sh "${{ job.status }}" apply.log

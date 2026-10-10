@@ -1,0 +1,28 @@
+# PR gate: validate intent, prove generated files are committed, show the per-device diff.
+name: plan
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: write
+concurrency:
+  group: netops-lab            # one job at a time against the live lab
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: [self-hosted, netops-lab]
+    env:
+      EOS_USER: ${{ secrets.EOS_USER }}
+      EOS_PASSWORD: ${{ secrets.EOS_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (AVD schema validation) and check generated files are committed
+        run: make check-build
+      - name: Plan — per-device diff against the running lab
+        run: set -o pipefail; make plan 2>&1 | tee plan.log
+      - name: Post plan to the PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: iac/tools/plan-report.sh plan.log | gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body-file -

@@ -1,0 +1,34 @@
+type: l3leaf
+l3leaf:
+  defaults:
+    platform: cEOSLab
+    loopback_ipv4_pool: 10.2.0.0/24
+    loopback_ipv4_offset: 10
+    vtep_loopback_ipv4_pool: 10.2.1.0/24
+    uplink_switches: [dc2-spine1, dc2-spine2]
+    uplink_ipv4_pool: 10.2.255.0/24
+    virtual_router_mac_address: 00:1c:73:00:00:02
+    spanning_tree_mode: mstp
+    filter: {tags: [stretch]}
+    mlag: false                       # I-ES all-active instead of MLAG
+    evpn_gateway:
+      evpn_l2: {enabled: true}
+      evpn_l3: {enabled: true, inter_domain: true}
+      # RFC 9014 Interconnect ES: both gateways of this DC share one I-ESI; DF election lets only
+      # one gateway forward BUM per VLAN, so stretched-L2 floods can't loop between the DCs.
+      all_active_multihoming:
+        enabled: true
+        enable_d_path: true
+        evpn_domain_id_local: "2:2"
+        evpn_domain_id_remote: "1:1"
+        evpn_ethernet_segment:
+          identifier: "0000:0000:0002:0002:0002"
+          rt_import: "00:00:00:02:00:02"
+      remote_peers:
+        - hostname: dc1-bgw1
+        - hostname: dc1-bgw2
+  node_groups:
+    - group: DC2_BGWS
+      nodes:
+        - {name: dc2-bgw1, id: 5, bgp_as: "65205", mgmt_ip: 172.20.20.25/24}
+        - {name: dc2-bgw2, id: 6, bgp_as: "65206", mgmt_ip: 172.20.20.26/24}

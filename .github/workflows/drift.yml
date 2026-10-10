@@ -1,0 +1,34 @@
+# Reconcile loop: detect when the running network diverges from main (manual change, fault, agent test).
+name: drift
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: netops-lab
+  cancel-in-progress: false
+jobs:
+  drift:
+    runs-on: [self-hosted, netops-lab]
+    env:
+      EOS_USER: ${{ secrets.EOS_USER }}
+      EOS_PASSWORD: ${{ secrets.EOS_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Plan against main
+        run: set -o pipefail; make plan 2>&1 | tee plan.log
+      - name: Open / update drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if grep -qE 'changed=[1-9]' plan.log; then
+            body=$(iac/tools/plan-report.sh plan.log)
+            n=$(gh issue list --label drift --state open --json number -q '.[0].number')
+            if [ -n "$n" ]; then gh issue comment "$n" --body "$body"
+            else gh issue create --label drift --title "Drift: running network differs from main" --body "$body"; fi
+            exit 1
+          fi
+          echo "no drift"

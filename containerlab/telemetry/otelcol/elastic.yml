@@ -1,0 +1,14 @@
+# Merged on top of base.yml when telemetry/otelcol/elastic.env has an endpoint.
+extensions:
+  file_storage/queue: {directory: /tmp}
+exporters:
+  otlp_http/elastic:
+    endpoint: ${env:ELASTIC_OTLP_ENDPOINT}
+    headers:
+      Authorization: ApiKey ${env:ELASTIC_API_KEY}
+    sending_queue: {enabled: true, storage: file_storage/queue}
+service:
+  extensions: [file_storage/queue]
+  pipelines:
+    metrics:
+      exporters: [debug, prometheus, otlp_http/elastic]

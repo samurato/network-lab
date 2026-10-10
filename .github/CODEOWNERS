@@ -1,0 +1,4 @@
+# Every change to the network needs a human network engineer's approval — including the Auto-SRE
+# agent's 3 AM PRs.  Replace the placeholder with your GitHub team or usernames.
+*                @NETWORK-REVIEWERS
+/iac/intent/     @NETWORK-REVIEWERS

@@ -1,0 +1,47 @@
+# SOURCE OF TRUTH — Arista DC fabrics (AVD data model).  Devices + roles + mgmt IPs.
+# Topology: two independent EVPN-VXLAN domains (DC1, DC2) joined by EVPN Gateways
+# (dc*-bgw*) over an FRR WAN. Leaves never see remote VTEPs; BGWs re-originate.
+all:
+  children:
+    FABRIC:
+      children:
+        DC1:
+          children:
+            DC1_SPINES:
+              hosts:
+                dc1-spine1: {ansible_host: 172.20.20.11}
+                dc1-spine2: {ansible_host: 172.20.20.12}
+            DC1_LEAFS:
+              hosts:
+                dc1-leaf1: {ansible_host: 172.20.20.13}
+                dc1-leaf2: {ansible_host: 172.20.20.14}
+                dc1-leaf3: {ansible_host: 172.20.20.15}
+                dc1-leaf4: {ansible_host: 172.20.20.16}
+            DC1_BGWS:
+              hosts:
+                dc1-bgw1: {ansible_host: 172.20.20.17}
+                dc1-bgw2: {ansible_host: 172.20.20.18}
+        DC2:
+          children:
+            DC2_SPINES:
+              hosts:
+                dc2-spine1: {ansible_host: 172.20.20.21}
+                dc2-spine2: {ansible_host: 172.20.20.22}
+            DC2_LEAFS:
+              hosts:
+                dc2-leaf1: {ansible_host: 172.20.20.23}
+                dc2-leaf2: {ansible_host: 172.20.20.24}
+            DC2_BGWS:
+              hosts:
+                dc2-bgw1: {ansible_host: 172.20.20.25}
+                dc2-bgw2: {ansible_host: 172.20.20.26}
+    NETWORK_SERVICES:
+      children:
+        DC1_LEAFS:
+        DC1_BGWS:
+        DC2_LEAFS:
+        DC2_BGWS:
+    CONNECTED_ENDPOINTS:
+      children:
+        DC1_LEAFS:
+        DC2_LEAFS:

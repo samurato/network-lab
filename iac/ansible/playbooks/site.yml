@@ -1,0 +1,21 @@
+# Converge everything to the built intent.
+#   make plan  -> --check --diff   (per-device diff, nothing changed)
+#   make apply -> converge          (EOS: full config-replace over eAPI; FRR: frr-reload; hosts: ip)
+# Declarative everywhere: anything on a device that is not in intent is removed.
+- name: Arista fabrics — config replace over eAPI
+  hosts: FABRIC
+  gather_facts: false
+  tasks:
+    - name: Deploy AVD-built configs
+      ansible.builtin.import_role:
+        name: arista.avd.eos_config_deploy_eapi
+
+- name: WAN / DCI routers (FRR)
+  hosts: WAN
+  gather_facts: false
+  roles: [frr_router]
+
+- name: Workload hosts
+  hosts: SERVERS
+  gather_facts: false
+  roles: [linux_host]

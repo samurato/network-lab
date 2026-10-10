@@ -1,0 +1,21 @@
+# Workload host networking: one data-plane NIC (eth1) on its leaf's VLAN, 10/8 via the anycast GW.
+- name: Converge eth1 address and DC route
+  ansible.builtin.shell: |
+    set -e; apply={{ ansible_check_mode | ternary(0, 1) }}
+    run() { echo "CHANGED: $*"; [ "$apply" = 1 ] && "$@" || true; }
+    ip link show eth1 | grep -q 'state UP' || run ip link set eth1 up
+    ip -4 -o addr show dev eth1 | grep -q " {{ server.ip }} " || run ip addr add {{ server.ip }} dev eth1
+    for stale in $(ip -4 -o addr show dev eth1 | awk '{print $4}' | grep -vx '{{ server.ip }}'); do
+      run ip addr del "$stale" dev eth1
+    done
+    ip route show 10.0.0.0/8 | grep -q "via {{ server.gw }} dev eth1" || run ip route replace 10.0.0.0/8 via {{ server.gw }} dev eth1
+  args:
+    executable: /bin/sh
+  register: _net
+  check_mode: false
+  changed_when: "'CHANGED' in _net.stdout"
+
+- name: Show changes
+  ansible.builtin.debug:
+    var: _net.stdout_lines
+  when: _net is changed and (ansible_diff_mode or ansible_check_mode)
