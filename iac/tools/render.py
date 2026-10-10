@@ -42,6 +42,11 @@ def clab_port(itf: str) -> str:
     return f"eth{m.group(1)}" if m else itf
 
 
+# `group` drives containerlab's built-in graph view (level + icon, NeXt UI sort order:
+# superspine, dc-gw, spine, leaf, server, ...).
+CLAB_GROUP = {"wan": "superspine", "bgw": "dc-gw", "spine": "spine", "leaf": "leaf", "host": "server", "telemetry": "1"}
+
+
 # --------------------------------------------------------------------------- pre
 def pre() -> None:
     hosts = load(INTENT / "hosts.yml")["hosts"]
@@ -131,6 +136,8 @@ def post() -> None:
         "kind": "linux", "image": "ghcr.io/openconfig/gnmic:0.49.0", "mgmt-ipv4": "172.20.20.251",
         "labels": {"role": "telemetry"}, "binds": ["telemetry/gnmic:/etc/gnmic:ro"],
         "env-files": ["telemetry/gnmic/gnmic.env"], "cmd": "--config /etc/gnmic/gnmic.yml subscribe"}
+    for n in nodes.values():
+        n["group"] = CLAB_GROUP[n["labels"]["role"]]
     topo = {"name": LAB,
             "mgmt": {"network": "clab-mgmt", "ipv4-subnet": "172.20.20.0/24"},
             "topology": {"kinds": {"arista_ceos": {

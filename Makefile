@@ -12,7 +12,7 @@ export EOS_USER ?= admin
 export EOS_PASSWORD ?= admin
 export ANSIBLE_COLLECTIONS_PATH ?= $(HOME)/.ansible/collections
 
-.PHONY: help build check-build up redeploy down plan apply verify status secrets
+.PHONY: help build check-build up redeploy down plan apply verify status secrets graph
 
 help:                ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -50,6 +50,9 @@ verify:              ## BGP / EVPN / multi-site isolation / data plane / telemet
 
 status:              ## containerlab node list
 	$(LAB) status
+
+graph:               ## live interactive topology view on http://<host>:50080
+	$(LAB) graph
 
 secrets:             ## runtime secret files for lab containers (git-ignored)
 	@printf 'GNMIC_USERNAME=%s\nGNMIC_PASSWORD=%s\n' "$$EOS_USER" "$$EOS_PASSWORD" > containerlab/telemetry/gnmic/gnmic.env

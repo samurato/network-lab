@@ -18,6 +18,7 @@ topology:
       labels:
         site: dc1
         role: bgw
+      group: dc-gw
     dc1-bgw2:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.18
@@ -25,6 +26,7 @@ topology:
       labels:
         site: dc1
         role: bgw
+      group: dc-gw
     dc1-leaf1:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.13
@@ -32,6 +34,7 @@ topology:
       labels:
         site: dc1
         role: leaf
+      group: leaf
     dc1-leaf2:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.14
@@ -39,6 +42,7 @@ topology:
       labels:
         site: dc1
         role: leaf
+      group: leaf
     dc1-leaf3:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.15
@@ -46,6 +50,7 @@ topology:
       labels:
         site: dc1
         role: leaf
+      group: leaf
     dc1-leaf4:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.16
@@ -53,6 +58,7 @@ topology:
       labels:
         site: dc1
         role: leaf
+      group: leaf
     dc1-spine1:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.11
@@ -60,6 +66,7 @@ topology:
       labels:
         site: dc1
         role: spine
+      group: spine
     dc1-spine2:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.12
@@ -67,6 +74,7 @@ topology:
       labels:
         site: dc1
         role: spine
+      group: spine
     dc2-bgw1:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.25
@@ -74,6 +82,7 @@ topology:
       labels:
         site: dc2
         role: bgw
+      group: dc-gw
     dc2-bgw2:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.26
@@ -81,6 +90,7 @@ topology:
       labels:
         site: dc2
         role: bgw
+      group: dc-gw
     dc2-leaf1:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.23
@@ -88,6 +98,7 @@ topology:
       labels:
         site: dc2
         role: leaf
+      group: leaf
     dc2-leaf2:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.24
@@ -95,6 +106,7 @@ topology:
       labels:
         site: dc2
         role: leaf
+      group: leaf
     dc2-spine1:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.21
@@ -102,6 +114,7 @@ topology:
       labels:
         site: dc2
         role: spine
+      group: spine
     dc2-spine2:
       kind: arista_ceos
       mgmt-ipv4: 172.20.20.22
@@ -109,6 +122,7 @@ topology:
       labels:
         site: dc2
         role: spine
+      group: spine
     wan1:
       kind: linux
       image: quay.io/frrouting/frr:10.7.1
@@ -119,6 +133,7 @@ topology:
       binds:
       - static/frr/daemons:/etc/frr/daemons:ro
       - static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: superspine
     wan2:
       kind: linux
       image: quay.io/frrouting/frr:10.7.1
@@ -129,54 +144,63 @@ topology:
       binds:
       - static/frr/daemons:/etc/frr/daemons:ro
       - static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      group: superspine
     dc1-web1:
       kind: linux
       image: ghcr.io/srl-labs/network-multitool:latest
       labels:
         site: dc1
         role: host
+      group: server
     dc1-web2:
       kind: linux
       image: ghcr.io/srl-labs/network-multitool:latest
       labels:
         site: dc1
         role: host
+      group: server
     dc1-app1:
       kind: linux
       image: ghcr.io/srl-labs/network-multitool:latest
       labels:
         site: dc1
         role: host
+      group: server
     dc1-app2:
       kind: linux
       image: ghcr.io/srl-labs/network-multitool:latest
       labels:
         site: dc1
         role: host
+      group: server
     dc1-stretch1:
       kind: linux
       image: ghcr.io/srl-labs/network-multitool:latest
       labels:
         site: dc1
         role: host
+      group: server
     dc2-db1:
       kind: linux
       image: ghcr.io/srl-labs/network-multitool:latest
       labels:
         site: dc2
         role: host
+      group: server
     dc2-db2:
       kind: linux
       image: ghcr.io/srl-labs/network-multitool:latest
       labels:
         site: dc2
         role: host
+      group: server
     dc2-stretch1:
       kind: linux
       image: ghcr.io/srl-labs/network-multitool:latest
       labels:
         site: dc2
         role: host
+      group: server
     otelcol:
       kind: linux
       image: otel/opentelemetry-collector-contrib:0.162.0
@@ -190,6 +214,7 @@ topology:
       cmd: --config /etc/otelcol/base.yml --config /etc/otelcol/extra.yml
       ports:
       - 9464:9464
+      group: '1'
     gnmic:
       kind: linux
       image: ghcr.io/openconfig/gnmic:0.49.0
@@ -201,6 +226,7 @@ topology:
       env-files:
       - telemetry/gnmic/gnmic.env
       cmd: --config /etc/gnmic/gnmic.yml subscribe
+      group: '1'
   links:
   - endpoints:
     - dc1-app1:eth1

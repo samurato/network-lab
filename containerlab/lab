@@ -42,7 +42,8 @@ case "$cmd" in
               wan:*)         exec docker exec -it "clab-$LAB-$node" vtysh ;;
               *)             exec docker exec -it "clab-$LAB-$node" bash ;;
             esac ;;
-  graph)    containerlab graph -t "$TOPO" --mermaid "$@" ;;
+  graph)    echo "topology view: http://$(hostname -I | awk '{print $1}'):50080"   # live web view, Ctrl-C to stop
+            containerlab graph -t "$TOPO" "$@" ;;
   netem)    containerlab tools netem "$@" ;;
   *)        sed -n '2,3p' "$0"; exit 1 ;;
 esac
