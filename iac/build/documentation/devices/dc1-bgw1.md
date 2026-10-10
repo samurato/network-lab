@@ -29,14 +29,15 @@
   - [IP Routing](#ip-routing)
   - [IPv6 Routing](#ipv6-routing)
   - [Static Routes](#static-routes)
+  - [Router OSPF](#router-ospf)
   - [Router BGP](#router-bgp)
 - [BFD](#bfd)
   - [Router BFD](#router-bfd)
 - [Multicast](#multicast)
   - [IP IGMP Snooping](#ip-igmp-snooping)
 - [Filters](#filters)
-  - [Prefix-lists](#prefix-lists)
   - [Route-maps](#route-maps)
+  - [IP Extended Community Lists](#ip-extended-community-lists)
 - [VRF Instances](#vrf-instances)
   - [VRF Instances Summary](#vrf-instances-summary)
   - [VRF Instances Device Configuration](#vrf-instances-device-configuration)
@@ -221,6 +222,8 @@ interface Ethernet1
    mtu 9214
    no switchport
    ip address 10.1.255.17/31
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
 !
 interface Ethernet2
    description P2P_dc1-spine2_Ethernet5
@@ -228,6 +231,8 @@ interface Ethernet2
    mtu 9214
    no switchport
    ip address 10.1.255.19/31
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
 !
 interface Ethernet3
    description P2P_wan1_eth1
@@ -270,11 +275,13 @@ interface Loopback0
    description ROUTER_ID
    no shutdown
    ip address 10.1.0.15/32
+   ip ospf area 0.0.0.0
 !
 interface Loopback1
    description VXLAN_TUNNEL_SOURCE
    no shutdown
    ip address 10.1.1.15/32
+   ip ospf area 0.0.0.0
 ```
 
 ### VLAN Interfaces
@@ -403,6 +410,36 @@ ip routing vrf PROD
 ip route vrf MGMT 0.0.0.0/0 172.20.20.1
 ```
 
+### Router OSPF
+
+#### Router OSPF Summary
+
+| Process ID | Router ID | Default Passive Interface | No Passive Interface | BFD | Max LSA | Default Information Originate | Log Adjacency Changes Detail | Auto Cost Reference Bandwidth | Maximum Paths | MPLS LDP Sync Default | Distribute List In |
+| ---------- | --------- | ------------------------- | -------------------- | --- | ------- | ----------------------------- | ---------------------------- | ----------------------------- | ------------- | --------------------- | ------------------ |
+| 100 | 10.1.0.15 | enabled | Ethernet1<br>Ethernet2 | disabled | 12000 | disabled | disabled | - | - | - | - |
+
+#### OSPF Interfaces
+
+| Interface | Area | Cost | Point To Point |
+| -------- | -------- | -------- | -------- |
+| Ethernet1 | 0.0.0.0 | - | True |
+| Ethernet2 | 0.0.0.0 | - | True |
+| Loopback0 | 0.0.0.0 | - | - |
+| Loopback1 | 0.0.0.0 | - | - |
+
+#### Router OSPF Device Configuration
+
+```eos
+!
+router ospf 100
+   router-id 10.1.0.15
+   passive-interface default
+   no passive-interface Ethernet1
+   no passive-interface Ethernet2
+   max-lsa 12000
+   graceful-restart
+```
+
 ### Router BGP
 
 ASN Notation: asplain
@@ -411,7 +448,7 @@ ASN Notation: asplain
 
 | BGP AS | Router ID |
 | ------ | --------- |
-| 65105 | 10.1.0.15 |
+| 65100 | 10.1.0.15 |
 
 | BGP Tuning |
 | ---------- |
@@ -437,32 +474,29 @@ ASN Notation: asplain
 | Settings | Value |
 | -------- | ----- |
 | Address Family | evpn |
+| Remote AS | 65100 |
 | Source | Loopback0 |
 | BFD | True |
-| Ebgp multihop | 3 |
 | Send community | all |
 | Maximum routes | 0 (no limit) |
 
-##### IPv4-UNDERLAY-PEERS
+##### WAN-PEERS
 
 | Settings | Value |
 | -------- | ----- |
-| Address Family | ipv4 |
 | Send community | all |
-| Maximum routes | 256000 |
+| Maximum routes | 12000 |
 
 #### BGP Neighbors
 
 | Neighbor | Remote AS | VRF | Shutdown | Send-community | Maximum-routes | Maximum-accepted-routes | Maximum-advertised-routes | Allowas-in | BFD | RIB Pre-Policy Retain | Route-Reflector Client | Passive | TTL Max Hops |
 | -------- | --------- | --- | -------- | -------------- | -------------- | ----------------------- | ------------------------- | ---------- | --- | --------------------- | ---------------------- | ------- | ------------ |
-| 10.1.0.1 | 65100 | default | - | Inherited from peer group EVPN-OVERLAY-PEERS | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | - |
-| 10.1.0.2 | 65100 | default | - | Inherited from peer group EVPN-OVERLAY-PEERS | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | - |
-| 10.1.255.16 | 65100 | default | - | Inherited from peer group IPv4-UNDERLAY-PEERS | Inherited from peer group IPv4-UNDERLAY-PEERS | - | - | - | - | - | - | - | - |
-| 10.1.255.18 | 65100 | default | - | Inherited from peer group IPv4-UNDERLAY-PEERS | Inherited from peer group IPv4-UNDERLAY-PEERS | - | - | - | - | - | - | - | - |
-| 10.2.0.15 | 65205 | default | - | Inherited from peer group EVPN-OVERLAY-CORE | Inherited from peer group EVPN-OVERLAY-CORE | - | - | - | Inherited from peer group EVPN-OVERLAY-CORE | - | - | - | - |
-| 10.2.0.16 | 65206 | default | - | Inherited from peer group EVPN-OVERLAY-CORE | Inherited from peer group EVPN-OVERLAY-CORE | - | - | - | Inherited from peer group EVPN-OVERLAY-CORE | - | - | - | - |
-| 10.255.0.1 | 64901 | default | - | Inherited from peer group IPv4-UNDERLAY-PEERS | Inherited from peer group IPv4-UNDERLAY-PEERS | - | - | - | - | - | - | - | - |
-| 10.255.0.9 | 64902 | default | - | Inherited from peer group IPv4-UNDERLAY-PEERS | Inherited from peer group IPv4-UNDERLAY-PEERS | - | - | - | - | - | - | - | - |
+| 10.1.0.1 | Inherited from peer group EVPN-OVERLAY-PEERS | default | - | Inherited from peer group EVPN-OVERLAY-PEERS | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | - |
+| 10.1.0.2 | Inherited from peer group EVPN-OVERLAY-PEERS | default | - | Inherited from peer group EVPN-OVERLAY-PEERS | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | - |
+| 10.2.0.15 | 65200 | default | - | Inherited from peer group EVPN-OVERLAY-CORE | Inherited from peer group EVPN-OVERLAY-CORE | - | - | - | Inherited from peer group EVPN-OVERLAY-CORE | - | - | - | - |
+| 10.2.0.16 | 65200 | default | - | Inherited from peer group EVPN-OVERLAY-CORE | Inherited from peer group EVPN-OVERLAY-CORE | - | - | - | Inherited from peer group EVPN-OVERLAY-CORE | - | - | - | - |
+| 10.255.0.1 | 64901 | default | - | Inherited from peer group WAN-PEERS | Inherited from peer group WAN-PEERS | - | - | - | - | - | - | - | - |
+| 10.255.0.9 | 64902 | default | - | Inherited from peer group WAN-PEERS | Inherited from peer group WAN-PEERS | - | - | - | - | - | - | - | - |
 
 #### Router BGP EVPN Address Family
 
@@ -471,7 +505,7 @@ ASN Notation: asplain
 | Peer Group | Activate | Route-map In | Route-map Out | Peer-tag In | Peer-tag Out | Encapsulation | Next-hop-self Source Interface |
 | ---------- | -------- | ------------ | ------------- | ----------- | ------------ | ------------- | ------------------------------ |
 | EVPN-OVERLAY-CORE | True | - | - | - | - | default | - |
-| EVPN-OVERLAY-PEERS | True | - | - | - | - | default | - |
+| EVPN-OVERLAY-PEERS | True | RM-EVPN-SOO-IN | RM-EVPN-SOO-OUT | - | - | default | - |
 
 ##### EVPN DCI Gateway Summary
 
@@ -501,7 +535,7 @@ ASN Notation: asplain
 
 ```eos
 !
-router bgp 65105
+router bgp 65100
    router-id 10.1.0.15
    no bgp default ipv4-unicast
    maximum-paths 4
@@ -513,39 +547,30 @@ router bgp 65105
    neighbor EVPN-OVERLAY-CORE send-community
    neighbor EVPN-OVERLAY-CORE maximum-routes 0
    neighbor EVPN-OVERLAY-PEERS peer group
+   neighbor EVPN-OVERLAY-PEERS remote-as 65100
    neighbor EVPN-OVERLAY-PEERS update-source Loopback0
    neighbor EVPN-OVERLAY-PEERS bfd
-   neighbor EVPN-OVERLAY-PEERS ebgp-multihop 3
    neighbor EVPN-OVERLAY-PEERS send-community
    neighbor EVPN-OVERLAY-PEERS maximum-routes 0
-   neighbor IPv4-UNDERLAY-PEERS peer group
-   neighbor IPv4-UNDERLAY-PEERS send-community
-   neighbor IPv4-UNDERLAY-PEERS maximum-routes 256000
+   neighbor WAN-PEERS peer group
+   neighbor WAN-PEERS send-community
+   neighbor WAN-PEERS maximum-routes 12000
    neighbor 10.1.0.1 peer group EVPN-OVERLAY-PEERS
-   neighbor 10.1.0.1 remote-as 65100
    neighbor 10.1.0.1 description dc1-spine1_Loopback0
    neighbor 10.1.0.2 peer group EVPN-OVERLAY-PEERS
-   neighbor 10.1.0.2 remote-as 65100
    neighbor 10.1.0.2 description dc1-spine2_Loopback0
-   neighbor 10.1.255.16 peer group IPv4-UNDERLAY-PEERS
-   neighbor 10.1.255.16 remote-as 65100
-   neighbor 10.1.255.16 description dc1-spine1_Ethernet5
-   neighbor 10.1.255.18 peer group IPv4-UNDERLAY-PEERS
-   neighbor 10.1.255.18 remote-as 65100
-   neighbor 10.1.255.18 description dc1-spine2_Ethernet5
    neighbor 10.2.0.15 peer group EVPN-OVERLAY-CORE
-   neighbor 10.2.0.15 remote-as 65205
+   neighbor 10.2.0.15 remote-as 65200
    neighbor 10.2.0.15 description dc2-bgw1_Loopback0
    neighbor 10.2.0.16 peer group EVPN-OVERLAY-CORE
-   neighbor 10.2.0.16 remote-as 65206
+   neighbor 10.2.0.16 remote-as 65200
    neighbor 10.2.0.16 description dc2-bgw2_Loopback0
-   neighbor 10.255.0.1 peer group IPv4-UNDERLAY-PEERS
+   neighbor 10.255.0.1 peer group WAN-PEERS
    neighbor 10.255.0.1 remote-as 64901
    neighbor 10.255.0.1 description wan1
-   neighbor 10.255.0.9 peer group IPv4-UNDERLAY-PEERS
+   neighbor 10.255.0.9 peer group WAN-PEERS
    neighbor 10.255.0.9 remote-as 64902
    neighbor 10.255.0.9 description wan2
-   redistribute connected route-map RM-CONN-2-BGP
    !
    vlan 150
       rd 10.1.0.15:10150
@@ -558,6 +583,8 @@ router bgp 65105
       neighbor EVPN-OVERLAY-CORE activate
       neighbor EVPN-OVERLAY-CORE domain remote
       neighbor EVPN-OVERLAY-PEERS activate
+      neighbor EVPN-OVERLAY-PEERS route-map RM-EVPN-SOO-IN in
+      neighbor EVPN-OVERLAY-PEERS route-map RM-EVPN-SOO-OUT out
       domain identifier 1:1
       domain identifier 2:2 remote
       neighbor default next-hop-self received-evpn-routes route-type ip-prefix inter-domain
@@ -569,7 +596,9 @@ router bgp 65105
    address-family ipv4
       no neighbor EVPN-OVERLAY-CORE activate
       no neighbor EVPN-OVERLAY-PEERS activate
-      neighbor IPv4-UNDERLAY-PEERS activate
+      neighbor WAN-PEERS activate
+      network 10.1.0.15/32
+      network 10.1.1.15/32
    !
    vrf PROD
       rd 10.1.0.15:1000
@@ -614,42 +643,48 @@ router bfd
 
 ## Filters
 
-### Prefix-lists
-
-#### Prefix-lists Summary
-
-##### PL-LOOPBACKS-EVPN-OVERLAY
-
-| Sequence | Action |
-| -------- | ------ |
-| 10 | permit 10.1.0.0/24 eq 32 |
-| 20 | permit 10.1.1.0/24 eq 32 |
-
-#### Prefix-lists Device Configuration
-
-```eos
-!
-ip prefix-list PL-LOOPBACKS-EVPN-OVERLAY
-   seq 10 permit 10.1.0.0/24 eq 32
-   seq 20 permit 10.1.1.0/24 eq 32
-```
-
 ### Route-maps
 
 #### Route-maps Summary
 
-##### RM-CONN-2-BGP
+##### RM-EVPN-SOO-IN
 
 | Sequence | Type | Match | Set | Sub-Route-Map | Continue |
 | -------- | ---- | ----- | --- | ------------- | -------- |
-| 10 | permit | ip address prefix-list PL-LOOPBACKS-EVPN-OVERLAY | - | - | - |
+| 10 | deny | extcommunity ECL-EVPN-SOO | - | - | - |
+| 20 | permit | - | - | - | - |
+
+##### RM-EVPN-SOO-OUT
+
+| Sequence | Type | Match | Set | Sub-Route-Map | Continue |
+| -------- | ---- | ----- | --- | ------------- | -------- |
+| 10 | permit | - | extcommunity soo 10.1.1.15:1 additive | - | - |
 
 #### Route-maps Device Configuration
 
 ```eos
 !
-route-map RM-CONN-2-BGP permit 10
-   match ip address prefix-list PL-LOOPBACKS-EVPN-OVERLAY
+route-map RM-EVPN-SOO-IN deny 10
+   match extcommunity ECL-EVPN-SOO
+!
+route-map RM-EVPN-SOO-IN permit 20
+!
+route-map RM-EVPN-SOO-OUT permit 10
+   set extcommunity soo 10.1.1.15:1 additive
+```
+
+### IP Extended Community Lists
+
+#### IP Extended Community Lists Summary
+
+| List Name | Type | Extended Communities |
+| --------- | ---- | -------------------- |
+| ECL-EVPN-SOO | permit | soo 10.1.1.15:1 |
+
+#### IP Extended Community Lists Device Configuration
+
+```eos
+ip extcommunity-list ECL-EVPN-SOO permit soo 10.1.1.15:1
 ```
 
 ## VRF Instances

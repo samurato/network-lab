@@ -4,18 +4,26 @@ Dual-DC **Arista EVPN-VXLAN multi-site** lab with streaming telemetry, managed e
 Built for the Auto-SRE hackathon: the agent reads telemetry in Elastic and fixes the network by opening a PR here.
 
 ```
-                 wan1 (FRR, AS64901) ══ wan2 (FRR, AS64902)          DCI underlay: eBGP
+                 wan1 (FRR, AS64901) ══ wan2 (FRR, AS64902)          DCI: eBGP (loopbacks)
                   ║ ║            ║ ║
       ┌───────── dc1-bgw1/2 ─────────┐          ┌───────── dc2-bgw1/2 ─────────┐
-      │  EVPN Gateways (AS65105/06)  │◄═ EVPN ═►│  EVPN Gateways (AS65205/06)  │  re-originate RT2/RT5,
+      │  EVPN Gateways (bgw1/bgw2)   │◄═ EVPN ═►│  EVPN Gateways (bgw1/bgw2)   │  re-originate RT2/RT5,
       │           │                  │  domain  │           │                  │  next-hop-self
-      │   dc1-spine1/2 (AS65100)     │  remote  │   dc2-spine1/2 (AS65200)     │
+      │   dc1-spine1/2 (EVPN RR)     │  remote  │   dc2-spine1/2 (EVPN RR)     │
       │   │      │      │      │     │          │      │          │            │
       │ leaf1  leaf2  leaf3  leaf4   │          │    leaf1      leaf2          │
       │  web   web+str  app    app   │          │     db       db+stretch      │
       └──────────────────────────────┘          └──────────────────────────────┘
         DC1 EVPN domain (VTEPs 10.1.1.x)          DC2 EVPN domain (VTEPs 10.2.1.x)
+        AS 65100: OSPF + iBGP EVPN                AS 65200: OSPF + iBGP EVPN
 ```
+
+| Layer | Protocol | AS | Where to change it |
+|---|---|---|---|
+| Underlay inside each DC | OSPF 100, area 0 (p2p links + loopbacks) | — | `iac/intent/group_vars/FABRIC.yml` (`underlay_*`) |
+| Overlay inside each DC | iBGP EVPN, spines are route reflectors | DC1 65100, DC2 65200 | `bgp_as` in `DC*_SPINES.yml`, `DC*_LEAFS.yml`, `DC*_BGWS.yml` |
+| BGW ↔ WAN | eBGP IPv4, advertises BGW loopbacks | WAN 64901 / 64902 | `DC*_BGWS.yml` (`structured_config.router_bgp`), `wan.yml`, `l3_edge` in `FABRIC.yml` |
+| BGW ↔ remote BGW | eBGP EVPN multihop, domain remote, I-ES | 65100 ↔ 65200 | `evpn_gateway` in `DC*_BGWS.yml` |
 VRF `PROD` (L3VNI 1000) spans both DCs through the gateways; VLAN 150 is stretched at L2.
 Leaves only ever see their own DC's VTEPs (`make verify` checks this).
 

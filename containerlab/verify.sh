@@ -16,6 +16,7 @@ EOS_USER=${EOS_USER:-admin}; EOS_PASSWORD=${EOS_PASSWORD:-admin}
 fail=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$*"; }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; fail=1; }
+SC="$(dirname "$TOPO")/../iac/build/intended/structured_configs"
 mgmt() { yq -r ".topology.nodes.\"$1\".\"mgmt-ipv4\"" "$TOPO"; }
 eapi() {  # eapi <node> <cmd>... -> JSON result array
   local node=$1; shift
@@ -25,7 +26,14 @@ eapi() {  # eapi <node> <cmd>... -> JSON result array
     | jq -c '.result'
 }
 
-echo "== BGP underlay + EVPN overlay (eAPI) =="
+echo "== OSPF underlay (eAPI) =="
+for n in $(yq -r '.topology.nodes | to_entries[] | select(.value.kind=="arista_ceos") | .key' "$TOPO"); do
+  want=$(yq '[.ethernet_interfaces[] | select(.ospf_area != null)] | length' "$SC/$n.yml")
+  full=$(eapi "$n" "show ip ospf neighbor" | jq '[.[0].vrfs.default.instList[]?.ospfNeighborEntries[]? | select(.adjacencyState=="full")] | length')
+  [[ $want -gt 0 && ${full:-0} -eq $want ]] && ok "$n $full/$want adjacencies full" || bad "$n ${full:-0}/$want adjacencies full"
+done
+
+echo "== BGP (EVPN overlay, WAN eBGP) =="
 for n in $(yq -r '.topology.nodes | to_entries[] | select(.value.kind=="arista_ceos") | .key' "$TOPO"); do
   r=$(eapi "$n" "show ip bgp summary" "show bgp evpn summary")
   read -r up total < <(jq -r '[.[] | .vrfs.default.peers // {} | .[] | .peerState]

@@ -11,7 +11,15 @@ l3leaf:
     uplink_ipv4_pool: 10.1.255.0/24
     virtual_router_mac_address: 00:1c:73:00:00:01
     spanning_tree_mode: mstp
+    bgp_as: 65100                     # iBGP: same AS as the DC1 spines
     filter: {tags: [stretch]}
+    structured_config:
+      router_bgp:
+        peer_groups:
+          - {name: WAN-PEERS, send_community: all, maximum_routes: 12000}
+        address_family_ipv4:
+          peer_groups:
+            - {name: WAN-PEERS, activate: true}
     mlag: false                       # I-ES all-active instead of MLAG
     evpn_gateway:
       evpn_l2: {enabled: true}
@@ -32,5 +40,27 @@ l3leaf:
   node_groups:
     - group: DC1_BGWS
       nodes:
-        - {name: dc1-bgw1, id: 5, bgp_as: "65105", mgmt_ip: 172.20.20.17/24}
-        - {name: dc1-bgw2, id: 6, bgp_as: "65106", mgmt_ip: 172.20.20.18/24}
+        - name: dc1-bgw1
+          id: 5
+          mgmt_ip: 172.20.20.17/24
+          structured_config:              # eBGP to the WAN: advertise own loopbacks, learn the other DC's
+            router_bgp:
+              neighbors:
+                - {ip_address: 10.255.0.1, peer_group: WAN-PEERS, remote_as: "64901", description: wan1}
+                - {ip_address: 10.255.0.9, peer_group: WAN-PEERS, remote_as: "64902", description: wan2}
+              address_family_ipv4:
+                networks:
+                  - prefix: 10.1.0.15/32   # Loopback0 (router-id, EVPN peering)
+                  - prefix: 10.1.1.15/32   # Loopback1 (VTEP)
+        - name: dc1-bgw2
+          id: 6
+          mgmt_ip: 172.20.20.18/24
+          structured_config:              # eBGP to the WAN: advertise own loopbacks, learn the other DC's
+            router_bgp:
+              neighbors:
+                - {ip_address: 10.255.0.3, peer_group: WAN-PEERS, remote_as: "64901", description: wan1}
+                - {ip_address: 10.255.0.11, peer_group: WAN-PEERS, remote_as: "64902", description: wan2}
+              address_family_ipv4:
+                networks:
+                  - prefix: 10.1.0.16/32   # Loopback0 (router-id, EVPN peering)
+                  - prefix: 10.1.1.16/32   # Loopback1 (VTEP)

@@ -16,8 +16,13 @@ eos_designs_documentation:
   topology_csv: true
   p2p_links_csv: true
 
-underlay_routing_protocol: ebgp
-overlay_routing_protocol: ebgp
+# Underlay: OSPF area 0 inside each DC (loopbacks + p2p links).
+# Overlay:  iBGP EVPN inside each DC (one AS per DC, spines are route reflectors).
+# Between DCs: eBGP — BGWs <-> WAN routers for loopbacks, BGW <-> remote BGW for EVPN.
+underlay_routing_protocol: ospf
+overlay_routing_protocol: ibgp
+underlay_ospf_process_id: 100
+underlay_ospf_area: 0.0.0.0
 
 # --- management plane (containerlab mgmt network)
 mgmt_interface_settings:
@@ -55,7 +60,8 @@ default_interfaces:
     platforms: [default]
     uplink_interfaces: [Ethernet1-2]
 
-# --- DCI underlay: BGW <-> WAN routers (FRR, outside AVD).  eBGP, loopbacks only cross the WAN.
+# --- DCI links: BGW <-> WAN routers (FRR, outside AVD). Not part of OSPF; the eBGP sessions on
+#     these links are defined per BGW in DC*_BGWS.yml (AVD only builds them for an eBGP underlay).
 l3_edge:
   p2p_links_ip_pools:
     - name: DCI_WAN
@@ -63,15 +69,15 @@ l3_edge:
   p2p_links_profiles:
     - name: DCI_WAN
       ip_pool: DCI_WAN
-      include_in_underlay_protocol: true
+      include_in_underlay_protocol: false
   p2p_links:
     # wan1
-    - {id: 1, profile: DCI_WAN, nodes: [dc1-bgw1, wan1], interfaces: [Ethernet3, eth1], as: ["65105", "64901"]}
-    - {id: 2, profile: DCI_WAN, nodes: [dc1-bgw2, wan1], interfaces: [Ethernet3, eth2], as: ["65106", "64901"]}
-    - {id: 3, profile: DCI_WAN, nodes: [dc2-bgw1, wan1], interfaces: [Ethernet3, eth3], as: ["65205", "64901"]}
-    - {id: 4, profile: DCI_WAN, nodes: [dc2-bgw2, wan1], interfaces: [Ethernet3, eth4], as: ["65206", "64901"]}
+    - {id: 1, profile: DCI_WAN, nodes: [dc1-bgw1, wan1], interfaces: [Ethernet3, eth1], ip: [10.255.0.0/31, 10.255.0.1/31]}
+    - {id: 2, profile: DCI_WAN, nodes: [dc1-bgw2, wan1], interfaces: [Ethernet3, eth2], ip: [10.255.0.2/31, 10.255.0.3/31]}
+    - {id: 3, profile: DCI_WAN, nodes: [dc2-bgw1, wan1], interfaces: [Ethernet3, eth3], ip: [10.255.0.4/31, 10.255.0.5/31]}
+    - {id: 4, profile: DCI_WAN, nodes: [dc2-bgw2, wan1], interfaces: [Ethernet3, eth4], ip: [10.255.0.6/31, 10.255.0.7/31]}
     # wan2
-    - {id: 5, profile: DCI_WAN, nodes: [dc1-bgw1, wan2], interfaces: [Ethernet4, eth1], as: ["65105", "64902"]}
-    - {id: 6, profile: DCI_WAN, nodes: [dc1-bgw2, wan2], interfaces: [Ethernet4, eth2], as: ["65106", "64902"]}
-    - {id: 7, profile: DCI_WAN, nodes: [dc2-bgw1, wan2], interfaces: [Ethernet4, eth3], as: ["65205", "64902"]}
-    - {id: 8, profile: DCI_WAN, nodes: [dc2-bgw2, wan2], interfaces: [Ethernet4, eth4], as: ["65206", "64902"]}
+    - {id: 5, profile: DCI_WAN, nodes: [dc1-bgw1, wan2], interfaces: [Ethernet4, eth1], ip: [10.255.0.8/31, 10.255.0.9/31]}
+    - {id: 6, profile: DCI_WAN, nodes: [dc1-bgw2, wan2], interfaces: [Ethernet4, eth2], ip: [10.255.0.10/31, 10.255.0.11/31]}
+    - {id: 7, profile: DCI_WAN, nodes: [dc2-bgw1, wan2], interfaces: [Ethernet4, eth3], ip: [10.255.0.12/31, 10.255.0.13/31]}
+    - {id: 8, profile: DCI_WAN, nodes: [dc2-bgw2, wan2], interfaces: [Ethernet4, eth4], ip: [10.255.0.14/31, 10.255.0.15/31]}
