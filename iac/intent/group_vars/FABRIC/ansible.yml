@@ -1,0 +1,18 @@
+# HOW THE TOOLING RUNS (not network design): Ansible login to the switches and AVD output location.
+
+# --- eAPI login. Credentials come from env / CI secrets (EOS_USER, EOS_PASSWORD), lab default admin.
+ansible_connection: ansible.netcommon.httpapi
+ansible_network_os: arista.eos.eos
+ansible_user: "{{ lookup('ansible.builtin.env', 'EOS_USER') | default('admin', true) }}"
+ansible_password: "{{ lookup('ansible.builtin.env', 'EOS_PASSWORD') | default('admin', true) }}"
+ansible_become: true
+ansible_become_method: enable
+ansible_httpapi_use_ssl: true
+ansible_httpapi_validate_certs: false
+
+# --- AVD writes intended configs + docs to iac/build (committed, reviewed in PRs)
+fabric_name: FABRIC
+root_dir: "{{ inventory_dir }}/../build"
+eos_designs_documentation:
+  topology_csv: true
+  p2p_links_csv: true

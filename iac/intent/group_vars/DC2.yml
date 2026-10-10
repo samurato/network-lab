@@ -1,1 +1,95 @@
+# DC2: every DC2 switch (spines, leaves, border gateways)
+#
+#   AS           65200 on every DC2 switch (iBGP EVPN; spines are route reflectors)
+#   Loopback0    10.2.0.0/24    router-id + EVPN peering   spines .1-.2, leaves/BGWs .10 + id
+#   Loopback1    10.2.1.0/24    VTEP (VXLAN source)        leaves/BGWs .10 + id
+#   Fabric p2p   10.2.255.0/24  leaf/BGW <-> spine /31s, OSPF area 0
+#
+#   Routing design: FABRIC/routing.yml    VLANs: FABRIC/vlans-vrfs.yml    Servers: ../hosts.yml
 dc_name: DC2
+
+# ================================================================= SPINES
+spine:
+  defaults:
+    platform: cEOSLab
+    bgp_as: 65200
+    loopback_ipv4_pool: 10.2.0.0/24
+  nodes:
+    - {name: dc2-spine1, id: 1, mgmt_ip: 172.20.20.21/24}
+    - {name: dc2-spine2, id: 2, mgmt_ip: 172.20.20.22/24}
+
+# ================================================================= LEAVES + BORDER GATEWAYS
+# Both are AVD "l3leaf" switches: `defaults` apply to both, uplinks Ethernet1-2 to the spines.
+l3leaf:
+  defaults:
+    platform: cEOSLab
+    bgp_as: 65200
+    loopback_ipv4_pool: 10.2.0.0/24
+    loopback_ipv4_offset: 10
+    vtep_loopback_ipv4_pool: 10.2.1.0/24
+    uplink_switches: [dc2-spine1, dc2-spine2]
+    uplink_ipv4_pool: 10.2.255.0/24
+    virtual_router_mac_address: 00:1c:73:00:00:02   # anycast gateway MAC
+    spanning_tree_mode: mstp
+
+  # ---------------------------------------------------------------- leaves
+  # filter.tags = which VLANs the leaf carries (tags in FABRIC/vlans-vrfs.yml)
+  nodes:
+    - {name: dc2-leaf1, id: 1, mgmt_ip: 172.20.20.23/24, filter: {tags: [db]}}
+    - {name: dc2-leaf2, id: 2, mgmt_ip: 172.20.20.24/24, filter: {tags: [db, stretch]}}
+
+  # ---------------------------------------------------------------- border gateways (EVPN gateways)
+  # Terminate DC2's EVPN domain and re-originate routes to DC1's gateways with next-hop-self,
+  # so DC2 leaves only ever see DC2 VTEPs.
+  node_groups:
+    - group: DC2_BGWS
+      filter: {tags: [stretch]}   # carry the stretched VLAN 150 to DC1
+      mlag: false                 # the pair is all-active via the I-ES below, not MLAG
+      evpn_gateway:
+        remote_peers:             # eBGP EVPN multihop to the other DC's gateways (AS 65100)
+          - hostname: dc1-bgw1
+          - hostname: dc1-bgw2
+        evpn_l2: {enabled: true}
+        evpn_l3: {enabled: true, inter_domain: true}
+        # RFC 9014 Interconnect ES: both gateways share one I-ESI; DF election lets only one
+        # forward BUM per VLAN, so stretched-L2 floods can't loop between the DCs.
+        all_active_multihoming:
+          enabled: true
+          enable_d_path: true
+          evpn_domain_id_local: "2:2"
+          evpn_domain_id_remote: "1:1"
+          evpn_ethernet_segment:
+            identifier: "0000:0000:0002:0002:0002"
+            rt_import: "00:00:00:02:00:02"
+      structured_config:          # peer group for the WAN eBGP sessions (neighbors per gateway below)
+        router_bgp:
+          peer_groups:
+            - {name: WAN-PEERS, send_community: all, maximum_routes: 12000}
+          address_family_ipv4:
+            peer_groups:
+              - {name: WAN-PEERS, activate: true}
+      nodes:
+        - name: dc2-bgw1
+          id: 5
+          mgmt_ip: 172.20.20.25/24
+          structured_config:
+            router_bgp:
+              neighbors:              # eBGP to the WAN routers (links in FABRIC/cabling.yml)
+                - {ip_address: 10.255.0.5, peer_group: WAN-PEERS, remote_as: "64901", description: wan1}
+                - {ip_address: 10.255.0.13, peer_group: WAN-PEERS, remote_as: "64902", description: wan2}
+              address_family_ipv4:
+                networks:             # own loopbacks, advertised to the other DC via the WAN
+                  - prefix: 10.2.0.15/32   # Loopback0: router-id, EVPN peering
+                  - prefix: 10.2.1.15/32   # Loopback1: VTEP
+        - name: dc2-bgw2
+          id: 6
+          mgmt_ip: 172.20.20.26/24
+          structured_config:
+            router_bgp:
+              neighbors:              # eBGP to the WAN routers (links in FABRIC/cabling.yml)
+                - {ip_address: 10.255.0.7, peer_group: WAN-PEERS, remote_as: "64901", description: wan1}
+                - {ip_address: 10.255.0.15, peer_group: WAN-PEERS, remote_as: "64902", description: wan2}
+              address_family_ipv4:
+                networks:             # own loopbacks, advertised to the other DC via the WAN
+                  - prefix: 10.2.0.16/32   # Loopback0: router-id, EVPN peering
+                  - prefix: 10.2.1.16/32   # Loopback1: VTEP

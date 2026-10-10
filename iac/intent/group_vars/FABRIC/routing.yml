@@ -1,0 +1,13 @@
+# ROUTING DESIGN (every switch, both DCs)
+#
+#   Inside each DC  underlay  OSPF 100, area 0     fabric p2p links + Loopback0 / Loopback1
+#                   overlay   iBGP EVPN            spines are route reflectors; one AS per DC
+#   Between DCs     BGW <-> WAN router     eBGP IPv4, only BGW loopbacks   (cabling.yml, DC*.yml)
+#                   BGW <-> remote BGW     eBGP EVPN multihop, "domain remote" (DC*.yml)
+#
+#   AS numbers      DC1 65100 (DC1.yml)    DC2 65200 (DC2.yml)    wan1 64901 / wan2 64902 (../wan.yml)
+underlay_routing_protocol: ospf
+underlay_ospf_process_id: 100
+underlay_ospf_area: 0.0.0.0
+
+overlay_routing_protocol: ibgp

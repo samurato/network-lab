@@ -2,10 +2,9 @@
 
 | Path | Edited by | What |
 |---|---|---|
-| `intent/inventory.yml` | humans / agent | Arista devices, groups (DC, role), mgmt IPs |
-| `intent/group_vars/FABRIC.yml` | humans / agent | fabric-wide: eAPI/gNMI, mgmt, users, DCI WAN links (`l3_edge`) |
-| `intent/group_vars/DC*_{SPINES,LEAFS,BGWS}.yml` | humans / agent | ASNs, pools, EVPN gateway peers, VLAN filter tags |
-| `intent/group_vars/NETWORK_SERVICES.yml` | humans / agent | tenants, VRFs, SVIs/VLANs (tags select leaves) |
+| `intent/inventory.yml` | humans / agent | switches by DC and role (`type`), mgmt IPs |
+| `intent/group_vars/FABRIC/*.yml` | humans / agent | shared by both DCs: `routing`, `vlans-vrfs`, `cabling`, `management`, `ansible` |
+| `intent/group_vars/DC1.yml`, `DC2.yml` | humans / agent | one DC each: AS, IP pools, spines, leaves, border gateways (EVPN gateway, WAN eBGP) |
 | `intent/hosts.yml`, `intent/wan.yml` | humans / agent | workload hosts, FRR WAN routers |
 | `build/` | `make build` only | AVD structured configs, EOS configs, fabric docs, FRR configs, lab inventory |
 | `ansible/` | engineers | playbooks: `build.yml` (AVD), `site.yml` (plan/apply) |

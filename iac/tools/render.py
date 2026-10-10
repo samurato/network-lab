@@ -68,7 +68,7 @@ def post() -> None:
         sys.exit("no AVD structured configs — run the AVD build first")
     wan = load(INTENT / "wan.yml")
     hosts = load(INTENT / "hosts.yml")["hosts"]
-    fabric_vars = load(INTENT / "group_vars" / "FABRIC.yml")
+    fabric_vars = load(INTENT / "group_vars" / "FABRIC" / "management.yml")
     admin_hash = next(u["sha512_password"] for u in fabric_vars["aaa_settings"]["local_users"] if u["name"] == "admin")
 
     links, wan_nodes, used_ports = set(), {}, {}
