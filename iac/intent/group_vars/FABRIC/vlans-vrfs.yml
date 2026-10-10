@@ -15,7 +15,23 @@ tenants:
       - name: PROD
         vrf_vni: 1000
         svis:
-          - {id: 110, name: WEB,     tags: [web],     enabled: true, ip_address_virtual: 10.10.10.1/24}
-          - {id: 120, name: APP,     tags: [app],     enabled: true, ip_address_virtual: 10.10.20.1/24}
-          - {id: 130, name: DB,      tags: [db],      enabled: true, ip_address_virtual: 10.20.30.1/24}
-          - {id: 150, name: STRETCH, tags: [stretch], enabled: true, ip_address_virtual: 10.15.0.1/24}
+          - id: 110
+            name: WEB
+            tags: [web]
+            enabled: true
+            ip_address_virtual: 10.10.10.1/24
+          - id: 120
+            name: APP
+            tags: [app]
+            enabled: true
+            ip_address_virtual: 10.10.20.1/24
+          - id: 130
+            name: DB
+            tags: [db]
+            enabled: true
+            ip_address_virtual: 10.20.30.1/24
+          - id: 150
+            name: STRETCH
+            tags: [stretch]
+            enabled: true
+            ip_address_virtual: 10.15.0.1/24

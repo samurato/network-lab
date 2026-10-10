@@ -23,12 +23,44 @@ l3_edge:
       include_in_underlay_protocol: false
   p2p_links:
     # to wan1
-    - {id: 1, profile: DCI_WAN, nodes: [dc1-bgw1, wan1], interfaces: [Ethernet3, eth1], ip: [10.255.0.0/31, 10.255.0.1/31]}
-    - {id: 2, profile: DCI_WAN, nodes: [dc1-bgw2, wan1], interfaces: [Ethernet3, eth2], ip: [10.255.0.2/31, 10.255.0.3/31]}
-    - {id: 3, profile: DCI_WAN, nodes: [dc2-bgw1, wan1], interfaces: [Ethernet3, eth3], ip: [10.255.0.4/31, 10.255.0.5/31]}
-    - {id: 4, profile: DCI_WAN, nodes: [dc2-bgw2, wan1], interfaces: [Ethernet3, eth4], ip: [10.255.0.6/31, 10.255.0.7/31]}
+    - id: 1
+      profile: DCI_WAN
+      nodes: [dc1-bgw1, wan1]
+      interfaces: [Ethernet3, eth1]
+      ip: [10.255.0.0/31, 10.255.0.1/31]
+    - id: 2
+      profile: DCI_WAN
+      nodes: [dc1-bgw2, wan1]
+      interfaces: [Ethernet3, eth2]
+      ip: [10.255.0.2/31, 10.255.0.3/31]
+    - id: 3
+      profile: DCI_WAN
+      nodes: [dc2-bgw1, wan1]
+      interfaces: [Ethernet3, eth3]
+      ip: [10.255.0.4/31, 10.255.0.5/31]
+    - id: 4
+      profile: DCI_WAN
+      nodes: [dc2-bgw2, wan1]
+      interfaces: [Ethernet3, eth4]
+      ip: [10.255.0.6/31, 10.255.0.7/31]
     # to wan2
-    - {id: 5, profile: DCI_WAN, nodes: [dc1-bgw1, wan2], interfaces: [Ethernet4, eth1], ip: [10.255.0.8/31, 10.255.0.9/31]}
-    - {id: 6, profile: DCI_WAN, nodes: [dc1-bgw2, wan2], interfaces: [Ethernet4, eth2], ip: [10.255.0.10/31, 10.255.0.11/31]}
-    - {id: 7, profile: DCI_WAN, nodes: [dc2-bgw1, wan2], interfaces: [Ethernet4, eth3], ip: [10.255.0.12/31, 10.255.0.13/31]}
-    - {id: 8, profile: DCI_WAN, nodes: [dc2-bgw2, wan2], interfaces: [Ethernet4, eth4], ip: [10.255.0.14/31, 10.255.0.15/31]}
+    - id: 5
+      profile: DCI_WAN
+      nodes: [dc1-bgw1, wan2]
+      interfaces: [Ethernet4, eth1]
+      ip: [10.255.0.8/31, 10.255.0.9/31]
+    - id: 6
+      profile: DCI_WAN
+      nodes: [dc1-bgw2, wan2]
+      interfaces: [Ethernet4, eth2]
+      ip: [10.255.0.10/31, 10.255.0.11/31]
+    - id: 7
+      profile: DCI_WAN
+      nodes: [dc2-bgw1, wan2]
+      interfaces: [Ethernet4, eth3]
+      ip: [10.255.0.12/31, 10.255.0.13/31]
+    - id: 8
+      profile: DCI_WAN
+      nodes: [dc2-bgw2, wan2]
+      interfaces: [Ethernet4, eth4]
+      ip: [10.255.0.14/31, 10.255.0.15/31]
