@@ -25,15 +25,15 @@ jobs:
         run: make check-build
       - name: Re-wire the lab if the topology changed
         run: |
-          if git diff --quiet HEAD~1 HEAD -- containerlab/netops.clab.yml containerlab/init-configs; then
+          if git diff --quiet HEAD~1 HEAD -- generated/lab; then
             echo "topology unchanged"
           else
-            make secrets && containerlab/lab redeploy
+            make secrets && lab/lab redeploy
           fi
       - name: Apply (EOS config-replace, FRR reload, hosts)
         run: set -o pipefail; make apply 2>&1 | tee apply.log
       - name: Verify
-        run: containerlab/verify.sh --wait 420
+        run: lab/verify.sh --wait 420
       - name: Record change event
         if: always()
-        run: iac/tools/change-event.sh "${{ job.status }}" apply.log
+        run: automation/change-event.sh "${{ job.status }}" apply.log

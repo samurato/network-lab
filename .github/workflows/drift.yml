@@ -25,7 +25,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if grep -qE 'changed=[1-9]' plan.log; then
-            body=$(iac/tools/plan-report.sh plan.log)
+            body=$(automation/plan-report.sh plan.log)
             n=$(gh issue list --label drift --state open --json number -q '.[0].number')
             if [ -n "$n" ]; then gh issue comment "$n" --body "$body"
             else gh issue create --label drift --title "Drift: running network differs from main" --body "$body"; fi

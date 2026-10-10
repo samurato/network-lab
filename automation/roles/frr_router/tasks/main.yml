@@ -1,0 +1,64 @@
+# Declarative push to FRR: stage intended frr.conf, `frr-reload.py --test` for the diff,
+# `--reload` to converge (adds AND removes lines), then persist as /etc/frr/frr.conf.
+
+- name: Artefact dir
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/../../generated/frr"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+
+- name: Render intended config (review artifact, committed)
+  ansible.builtin.template:
+    src: frr.conf.j2
+    dest: "{{ playbook_dir }}/../../generated/frr/{{ inventory_hostname }}.conf"
+    mode: "0644"
+  delegate_to: localhost
+  check_mode: false
+  changed_when: false
+
+- name: Stage intended config in the router
+  ansible.builtin.template:
+    src: frr.conf.j2
+    dest: /etc/frr/frr.conf.intended
+    mode: "0644"
+  check_mode: false
+  changed_when: false
+
+- name: Wait for bgpd
+  ansible.builtin.command: vtysh -c 'show bgp summary'
+  register: _bgpd
+  until: _bgpd.rc == 0
+  retries: 30
+  delay: 2
+  changed_when: false
+  check_mode: false
+
+- name: Diff running vs intended
+  ansible.builtin.command: python3 /usr/lib/frr/frr-reload.py --test /etc/frr/frr.conf.intended
+  register: _test
+  check_mode: false
+  changed_when: _delta | length > 0
+  vars:
+    _noise: '^(Lines To (Delete|Add)|=+|\s*)$'     # frr-reload headers and blank lines
+    _delta: "{{ _test.stdout_lines | reject('match', _noise) | list }}"
+
+- name: Show device diff
+  ansible.builtin.debug:
+    msg: "{{ _test.stdout_lines | reject('match', _blank) | list }}"
+  vars:
+    _blank: '^\s*$'
+  when: _test is changed and (ansible_diff_mode or ansible_check_mode)
+
+- name: Converge running config
+  ansible.builtin.command: python3 /usr/lib/frr/frr-reload.py --reload /etc/frr/frr.conf.intended
+  when: _test is changed and not ansible_check_mode
+
+- name: Persist as startup config
+  ansible.builtin.copy:
+    src: /etc/frr/frr.conf.intended
+    dest: /etc/frr/frr.conf
+    remote_src: true
+    mode: "0644"

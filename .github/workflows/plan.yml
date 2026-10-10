@@ -25,4 +25,4 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: iac/tools/plan-report.sh plan.log | gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body-file -
+        run: automation/plan-report.sh plan.log | gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body-file -

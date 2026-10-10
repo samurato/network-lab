@@ -1,0 +1,15 @@
+# AVD build: intent (inventory + group_vars) -> structured configs, EOS configs, fabric docs in generated/.
+# Pure, offline: needs no devices.  CI fails the PR if this fails (schema validation) or if the
+# committed generated/ differs from a fresh build.
+- name: Build Arista fabric configs (AVD)
+  hosts: FABRIC
+  gather_facts: false
+  vars_files:
+    - ../../generated/connected_endpoints.yml  # generated from network/hosts.yml by `render.py pre`
+  tasks:
+    - name: eos_designs — structured configs + fabric documentation
+      ansible.builtin.import_role:
+        name: arista.avd.eos_designs
+    - name: eos_cli_config_gen — device configs + device documentation
+      ansible.builtin.import_role:
+        name: arista.avd.eos_cli_config_gen

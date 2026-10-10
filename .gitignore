@@ -1,12 +1,10 @@
 # secrets / runtime state
-containerlab/telemetry/otelcol/elastic.env
-containerlab/telemetry/otelcol/extra.yml
-containerlab/telemetry/gnmic/gnmic.env
-containerlab/*.annotations.json
-containerlab/*.bak
+lab/telemetry/otelcol/elastic.env
+lab/telemetry/otelcol/extra.yml
+lab/telemetry/gnmic/gnmic.env
+generated/config_backup/
+generated/lab/*.annotations.json
 clab-*/
-iac/terraform/**/.terraform/
-iac/terraform/**/*.tfstate*
 __pycache__/
 *.retry
-iac/build/config_backup/
+*.bak

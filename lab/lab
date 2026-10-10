@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Lab lifecycle helper — containerlab owns nodes + cabling only; device config comes from network/ via make apply.
+#   lab/lab up | down | redeploy | status | wait | cli <node> | graph | netem <args>
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+TOPO="$HERE/../generated/lab/netops.clab.yml"
+LAB=netops
+export CLAB_LABDIR_BASE=${CLAB_LABDIR_BASE:-$HOME/clab-runs}   # runtime dirs stay off the SMB share
+mkdir -p "$CLAB_LABDIR_BASE"
+EOS_USER=${EOS_USER:-admin}; EOS_PASSWORD=${EOS_PASSWORD:-admin}
+
+mgmt_of() { yq -r ".topology.nodes.\"$1\".\"mgmt-ipv4\"" "$TOPO"; }
+nodes_where() { yq -r ".topology.nodes | to_entries[] | select($1) | .key" "$TOPO"; }
+
+wait_ready() {   # every cEOS answers eAPI, every FRR has bgpd up
+  local deadline=$((SECONDS + ${1:-420})) n
+  for n in $(nodes_where '.value.kind=="arista_ceos"'); do
+    until curl -sfk -u "$EOS_USER:$EOS_PASSWORD" "https://$(mgmt_of "$n")/command-api" -o /dev/null \
+          -H 'content-type: application/json' \
+          -d '{"jsonrpc":"2.0","method":"runCmds","params":{"version":1,"cmds":["show version"]},"id":1}'; do
+      ((SECONDS < deadline)) || { echo "timeout waiting for $n" >&2; return 1; }; sleep 5
+    done
+  done
+  for n in $(nodes_where '.value.labels.role=="wan"'); do
+    until docker exec "clab-$LAB-$n" vtysh -c 'show bgp summary' >/dev/null 2>&1; do
+      ((SECONDS < deadline)) || { echo "timeout waiting for $n" >&2; return 1; }; sleep 2
+    done
+  done
+  echo "all nodes ready"
+}
+
+cmd=${1:-help}; shift || true
+case "$cmd" in
+  up)       containerlab deploy -t "$TOPO" "$@" && wait_ready ;;
+  down)     containerlab destroy -t "$TOPO" --cleanup "$@" ;;
+  redeploy) containerlab deploy -t "$TOPO" --reconfigure "$@" && wait_ready ;;
+  status)   containerlab inspect -t "$TOPO" "$@" ;;
+  wait)     wait_ready "$@" ;;
+  cli)      node=${1:?usage: lab cli <node>}
+            case $(yq -r ".topology.nodes.\"$node\" | (.labels.role // \"\") + \":\" + .kind" "$TOPO") in
+              *:arista_ceos) exec docker exec -it "clab-$LAB-$node" Cli ;;
+              wan:*)         exec docker exec -it "clab-$LAB-$node" vtysh ;;
+              *)             exec docker exec -it "clab-$LAB-$node" bash ;;
+            esac ;;
+  graph)    echo "topology view: http://$(hostname -I | awk '{print $1}'):50080"   # live web view, Ctrl-C to stop
+            containerlab graph -t "$TOPO" "$@" ;;
+  netem)    containerlab tools netem "$@" ;;
+  *)        sed -n '2,3p' "$0"; exit 1 ;;
+esac
