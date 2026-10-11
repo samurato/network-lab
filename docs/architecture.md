@@ -325,6 +325,8 @@ Examples are in the [DevOps guide](devops-guide.md#traffic-and-faults).
 
 ## 8. Telemetry
 
+The full reference (data model, operating, gaps, roadmap) is the [streaming telemetry guide](telemetry.md).
+
 ```mermaid
 flowchart LR
   SW["14 cEOS switches<br/>gNMI :6030"] -- "subscribe" --> GN["gnmic<br/>172.20.20.251"]

@@ -45,6 +45,7 @@ The web app answers on **192.0.2.10** (public, from the WAN) and **10.99.0.10** 
 | [Architecture](docs/architecture.md) | the full design, with diagrams of every layer, design decisions and known gaps |
 | [IP plan](docs/ip-plan.md) | every subnet, address, AS number and the VIP registry |
 | [Network engineer's guide](docs/network-engineer-guide.md) | changing the fabric, routing and policy safely |
+| [Streaming telemetry](docs/telemetry.md) | the gNMI → OTel Collector → Elastic pipeline, its data and its roadmap |
 | [DevOps guide](docs/devops-guide.md) | running the lab, CI/CD, Elastic export, traffic and faults, troubleshooting |
 | [Kubernetes guide](docs/kubernetes-guide.md) | operating the cluster: nodes, Cilium, BGP, VIP pools, upgrades |
 | [Developer guide](docs/developer-guide.md) | deploying and exposing an app, step by step |
