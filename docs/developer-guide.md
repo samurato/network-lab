@@ -230,7 +230,7 @@ env {
 ```
 > **Known gap:** the collector only has a **metrics** pipeline. Traces and logs sent today are not
 > collected. Ask the platform team to add `traces` and `logs` pipelines to
-> `containerlab/telemetry/otelcol/base.yml` before you rely on them.
+> `containerlab/telemetry/otelcol/base.yml` before you rely on them. See [Streaming telemetry](telemetry.md#10-roadmap-proposed).
 
 ## Example in the repo: `web`
 

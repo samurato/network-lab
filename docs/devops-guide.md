@@ -105,6 +105,8 @@ To enable the pipeline:
 
 ## Telemetry export to Elastic
 
+Details, data reference and troubleshooting: [streaming telemetry guide](telemetry.md).
+
 ```bash
 cp automation/elastic.env.example automation/elastic.env     # git-ignored
 # fill ELASTIC_OTLP_ENDPOINT (Elastic Cloud -> Observability -> Add data -> OpenTelemetry -> managed OTLP)
