@@ -441,8 +441,8 @@ sequenceDiagram
 ```
 
 Workflows live in `.github/workflows/` (`plan.yml`, `deploy.yml`, `drift.yml`) and run on a self-hosted
-runner labelled `netops-lab` on the lab host. Secrets: `EOS_USER`, `EOS_PASSWORD`, `ELASTIC_ES_URL`,
-`ELASTIC_API_KEY`.
+runner labelled `netops-lab` on the lab host. Secrets: `EOS_USER`, `EOS_PASSWORD` (set);
+`ELASTIC_ES_URL`, `ELASTIC_API_KEY` (optional, not set yet, so change events stay in `~/netops-changes.jsonl`).
 
 ---
 
@@ -468,11 +468,12 @@ runner labelled `netops-lab` on the lab host. Secrets: `EOS_USER`, `EOS_PASSWORD
 
 | Gap | Impact | Next step |
 |---|---|---|
-| Elastic endpoint and API key not configured yet | telemetry stays in the lab (`localhost:9464/metrics`) | fill `automation/elastic.env`, `make redeploy` |
-| OTel Collector has a metrics pipeline only | the web app's traces are not collected | add `traces` (and `logs`) pipelines to `containerlab/telemetry/otelcol/base.yml` |
-| No flow data (cEOS sends no sFlow samples) | no per-flow reachability analysis yet | pmacctd sidecars → filelog → Elastic (designed, not built) |
+| Elastic endpoint and API key not configured yet | telemetry stays in the lab (`localhost:9464/metrics`); a CI redeploy also comes back without Elastic | `automation/elastic.env` + repository secrets: [observability roadmap](observability-roadmap.md) steps 0–2 |
+| OTel Collector has a metrics pipeline only | the web app's trace export fails with HTTP 404 (seen in the pod logs) | add `traces` and `logs` pipelines: [roadmap](observability-roadmap.md) step 1 |
+| No routing-table telemetry | OpenConfig AFT and BGP RIB paths return empty (only `provider eos-native` is enabled) | enable `provider aft`: [roadmap](observability-roadmap.md) steps 5–6 |
+| No Kubernetes, Cilium or Hubble telemetry | node, pod and Cilium health not visible | [roadmap](observability-roadmap.md) steps 11–12 |
+| No flow data (cEOS sends no sFlow samples) | no per-flow reachability analysis yet | host-side sampling (pmacctd / hsflowd) → Elastic: [roadmap](observability-roadmap.md) step 10 |
 | No synthetic ping-mesh | reachability only via `make verify` | `icmp_check` probes → OTLP (designed, not built) |
 | WAN routers hash ECMP on L3 only | one client (k6) always lands in the same DC | `net.ipv4.fib_multipath_hash_policy=1` on wan1/wan2 |
 | Occasional VIP request timeouts were seen once | not reproduced on re-test (40/40 OK) | watch `make verify`; investigate if it recurs |
-| Self-hosted runner, repo secrets, `CODEOWNERS` team | GitOps workflows do not run yet | register the runner, add secrets, set the reviewers team |
-| Repo is public and the runner is self-hosted | a fork PR could run code on the lab host | make the repo private or require approval for fork workflows |
+| Repo is public and the runner is self-hosted | a fork PR could run code on the lab host | mitigated: workflows from fork PRs need approval; keep it that way (or make the repo private) |

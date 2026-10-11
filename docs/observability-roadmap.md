@@ -31,6 +31,7 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 | `change-event.sh` writes ECS change events | The secrets `ELASTIC_ES_URL` and `ELASTIC_API_KEY` are not set, so events stay in `~/netops-changes.jsonl` |
 | The `web` pods send OTLP traces | **otelcol has no traces pipeline, so the export fails with `404`** |
 | Hubble enabled in Cilium | Nothing from k8s or Cilium is collected |
+| | Flows: cEOS was seen to send no sFlow samples, so this needs a test or host-side sampling |
 | | Route tables (OpenConfig AFT), OSPF, EVPN/VXLAN, syslog, sFlow, FRR WAN, hosts, context indices, alert rules |
 
 ---
@@ -108,7 +109,10 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 - [ ] `network/group_vars/FABRIC/management.yml`:
   - enable the OpenConfig route-table models: `management api models` → `provider aft` with `ipv4-unicast` and `ipv6-unicast`, via `custom_structured_configuration_eos_cli` or the AVD key;
   - `logging host 172.20.20.250` in VRF MGMT;
-  - `sflow` (sample 1:100, destination the goflow2 IP, source Management1). It is used in Step 10, so enabling it now is harmless.
+  - sFlow: **test first on one leaf.** cEOS in containers was seen to send no sFlow samples
+    ([architecture.md § Known gaps](architecture.md#12-known-gaps)). Enable it (sample 1:100, destination
+    the goflow2 IP, source Management1) and check the sample counters in `show sflow`. Roll it out only if
+    samples appear; otherwise Step 10 uses host-side sampling.
 - [ ] `make build && make plan`: check the diff is only these lines, then merge. The deploy applies it.
 
 **Done when:** `gnmic get --path '/network-instances/network-instance[name=default]/afts/ipv4-unicast'` returns routes.
@@ -164,8 +168,9 @@ In `automation/telemetry/gnmic.base.yml`:
 ## Phase P3 – Flows
 
 ### Step 10 – sFlow → goflow2 → Elastic
+- [ ] Sources: cEOS sFlow if Step 5's test showed samples. Otherwise sample on the lab host instead:
+  `hsflowd` or `pmacctd` watching the lab's veth links, which sees every hop without the switches' help.
 - [ ] `automation/render.py`: add a `goflow2` node on `clab-mgmt` with a fixed IP. It writes JSON to a bind-mounted file, which the collector reads with `filelog` into `logs-sflow.flows`.
-- [ ] FRR and Linux hosts: add `hsflowd` where it's cheap (optional).
 
 **Done when:** during `iperf3 -c iperf3-dc2`, the top talker in Elastic is the iperf pod IP, seen on every hop of the path.
 

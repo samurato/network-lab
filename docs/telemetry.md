@@ -441,12 +441,17 @@ Checked against the live lab. The paths marked ✗ were tried on `dc1-leaf1` / `
 | BFD sessions | model present, empty (BFD not configured) |
 | Queue drops | model present, empty on cEOS ✗ |
 | Syslog | no `logging host` configured on any device |
-| Flows (sFlow / IPFIX) | not configured |
+| Routing table (OpenConfig AFT), BGP RIB | empty: needs `management api models` → `provider aft` on the switches. Arista native `eos_native:/Smash/routing/status/route` works, but routes point to FEC IDs |
+| Flows (sFlow / IPFIX) | not configured (cEOS was seen to send no sFlow samples; IPFIX unproven) |
+| App traces and logs | the web pods' export fails with HTTP 404: the collector has no traces or logs pipeline |
 | Hosts and Kubernetes nodes (network) | not collected |
 
 ---
 
 ## 10. Roadmap (proposed)
+
+The step-by-step build plan, from network devices to Kubernetes, Cilium and the web app, is in
+[observability-roadmap.md](observability-roadmap.md). This section keeps the design reasoning.
 
 **Not built yet.** The aim is to use Elastic for as much as possible: its collector, its endpoint, its lookups,
 alerts, SLOs and synthetic monitoring, with the Elastic side defined in Terraform.

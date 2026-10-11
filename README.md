@@ -22,8 +22,8 @@ How to read it, left to right:
    - Two EVPN-VXLAN data centres, joined by EVPN gateways over an FRR WAN.
    - Kubernetes nodes plug into the leaves like servers and announce pod networks and VIPs over BGP.
    - Internet users and an attacker sit behind the WAN.
-4. **Observability.** Every switch streams gNMI through an OTel Collector to Elastic, where the Auto-SRE
-   agent watches.
+4. **Observability.** Every switch streams gNMI to an OTel Collector. Export to Elastic, where the Auto-SRE
+   agent watches, is built but waits for an endpoint ([roadmap](docs/observability-roadmap.md)).
 5. **The loop closes with a pull request.** CI plans it, an engineer approves, and the merge deploys it.
 
 Each layer has its own detailed diagrams in [docs/architecture.md](docs/architecture.md).
@@ -34,7 +34,7 @@ Each layer has its own detailed diagrams in [docs/architecture.md](docs/architec
 | **Compute** | 6 k3s nodes, each on a routed /31 to a leaf; 3 control-plane nodes (DC1, DC2, WAN tie-breaker) | `kubernetes/cluster.yml` → `render.py` → containerlab |
 | **Platform and apps** | Cilium (native routing, BGP to the leaves, load-balancer VIPs), the web app 2 + 2 across the DCs, iperf3 servers | `kubernetes/terraform/` → Terraform |
 | **Traffic** | k6 users and a rate-capped attacker behind the WAN, link faults with netem | `network/wan.yml` |
-| **Observability** | gNMI from every switch → OTel Collector → Elastic, plus a change event per deploy | `automation/telemetry/`, `containerlab/telemetry/` |
+| **Observability** | gNMI from every switch → OTel Collector (Elastic export ready, endpoint not configured yet), plus a change event per deploy | `automation/telemetry/`, `containerlab/telemetry/` |
 
 The web app answers on **192.0.2.10** (public, from the WAN) and **10.99.0.10** (inside the DCs).
 
@@ -46,6 +46,7 @@ The web app answers on **192.0.2.10** (public, from the WAN) and **10.99.0.10** 
 | [IP plan](docs/ip-plan.md) | every subnet, address, AS number and the VIP registry |
 | [Network engineer's guide](docs/network-engineer-guide.md) | changing the fabric, routing and policy safely |
 | [Streaming telemetry](docs/telemetry.md) | the gNMI → OTel Collector → Elastic pipeline, its data and its roadmap |
+| [Observability roadmap](docs/observability-roadmap.md) | the step-by-step plan for end-to-end observability (network → Kubernetes → Cilium → app) |
 | [DevOps guide](docs/devops-guide.md) | running the lab, CI/CD, Elastic export, traffic and faults, troubleshooting |
 | [Kubernetes guide](docs/kubernetes-guide.md) | operating the cluster: nodes, Cilium, BGP, VIP pools, upgrades |
 | [Developer guide](docs/developer-guide.md) | deploying and exposing an app, step by step |

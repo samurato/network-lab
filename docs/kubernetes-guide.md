@@ -144,5 +144,7 @@ the pods in DC1 within seconds.
 | Cilium: `/sys/fs/bpf ... not a shared mount` | `mount --make-rshared /` + shared bpffs in `entrypoint.sh` |
 | With flannel off, containerd reads CNI from `/etc/cni/net.d`, `/opt/cni/bin` | Cilium's defaults (no `cni.*` overrides) |
 | `k3s ctr` is not in this k3s build | `ctr --address /run/k3s/containerd/containerd.sock` |
+| A node's containerd only exists once its k3s has joined; on a cold deploy the DC2 nodes join last | `terraform_data.image` waits up to 10 min for the containerd socket before importing images |
+| A timed-out Cilium Helm install leaves the release outside Terraform state | `helm_release.cilium` waits up to 15 min; if it still happens, see `cannot re-use a name` in the [DevOps guide](devops-guide.md#troubleshooting) |
 | `spec.podCIDR` can only be set once | `nodes.tf` refuses to change it; a new CIDR needs a redeploy |
 | The tie-breaker zone `wan` would count as a spread domain | `web` has a node affinity for zones `dc1`, `dc2` |
