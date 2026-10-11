@@ -88,20 +88,20 @@ How runs are kept apart:
   - `netops-plan-<PR>`: a new push to a PR cancels that PR's running plan.
   - `netops-drift`: drift runs never cancel anything else.
 
-To enable the pipeline:
-1. **Register the runner.** GitHub → repo → Settings → Actions → Runners → New self-hosted runner (Linux).
-   Install it on the lab host as user `samrat` with the label `netops-lab`.
+The pipeline is live (since 2026-10-11). How it is set up, for a rebuild:
+1. **Runner.** Self-hosted runner `containerlab` (service `actions.runner.samurato-network-lab.containerlab`,
+   `~/actions-runner`) on the lab host as user `samrat`, labels `netops-lab` and `net-devops-lab`.
 2. **Add the repository secrets.**
 
    | Secret | What |
    |---|---|
    | `EOS_USER` / `EOS_PASSWORD` | switch credentials (lab default admin/admin) |
-   | `ELASTIC_ES_URL` / `ELASTIC_API_KEY` | where change events are sent (optional) |
+   | `ELASTIC_ES_URL` / `ELASTIC_API_KEY` | where change events are sent (optional, **not set yet**) |
 
-3. **Set the reviewers.** Replace `@NETWORK-REVIEWERS` in `.github/CODEOWNERS` with a real team, and protect
-   `main` (require PRs and code-owner review).
-4. **Fork pull requests.** The repo is public, so make it private, or require approval for workflows from
-   fork PRs. A self-hosted runner executes PR code on the lab host.
+3. **Reviewers.** `.github/CODEOWNERS` names `@samurato`. `main` is protected: a PR, code-owner review and
+   the `plan` check are required. Admins can bypass, so a sole maintainer merges with `gh pr merge --admin`.
+4. **Fork pull requests.** The repo is public, so workflows from fork PRs need approval (set). A
+   self-hosted runner executes PR code on the lab host.
 
 ## Telemetry export to Elastic
 
@@ -150,6 +150,7 @@ automation/k8s kubectl -n prod scale deploy/web --replicas=0     # then back wit
 | k3s node keeps logging `entrypoint: k3s exited` | `docker logs clab-netops-<node>` | normal for a few tries while the first server boots; persistent means cp1's API is unreachable: check the node's leaf with `show ip bgp summary vrf PROD` |
 | Nodes `NotReady` after `make up` | `automation/k8s kubectl get pods -n kube-system` | Cilium not running yet; `make k8s` again and read the error |
 | Terraform "state lock" error | is another terraform running? `pgrep -af terraform` | if none: `terraform -chdir=kubernetes/terraform force-unlock <ID>` with `TF_DATA_DIR=~/.cache/netops/terraform-kubernetes` |
+| `cannot re-use a name that is still in use` (Cilium) | `helm -n kube-system list` shows `cilium` as `failed` | an earlier Helm install timed out and the release is outside Terraform state. Under the lab lock, with the same `TF_DATA_DIR` and state: `terraform -chdir=kubernetes/terraform import helm_release.cilium kube-system/cilium`, then `make k8s` |
 | A pod stays `Pending` | `kubectl describe pod` | spread / affinity rules: workloads only run in zones `dc1`, `dc2` |
 | `make verify` VIP check fails | `show ip bgp vrf PROD <vip>/32` on the leaf | no ready pod in that DC (the VIP is withdrawn by design) or the leaf's session to its node is down |
 | Drift issue opened | the issue's diff | someone or something changed a device by hand; merge the change into `network/` or let `make apply` revert it |
