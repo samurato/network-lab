@@ -1,16 +1,73 @@
 #!/usr/bin/env bash
 # Lab lifecycle helper — containerlab owns nodes + cabling only; device config comes from network/ via make apply.
-#   automation/lab up | down | redeploy | status | wait | cli <node> | graph | netem <args>
+#   automation/lab up | down | redeploy | converge | sync | status | wait | cli <node> | graph | netem <args>
+#   automation/lab locked <command...>     run a command holding the lab lock
+#
+# The lab never runs from the checkout. `up`/`redeploy` copy containerlab/ to a bundle on local disk
+# ($CLAB_LABDIR_BASE/netops-bundle) and deploy that, so bind mounts never point into the SMB share or a CI
+# workspace. `sync` updates the bundle IN PLACE (running containers bind its files by inode), and refuses to
+# touch the topology: a topology change needs `redeploy`, which `converge` does on its own.
+#
+# Everything that changes the lab or reads it for a plan holds one host-wide lock, so CI jobs and people
+# never overlap (make plan/apply, automation/k8s plan/apply/destroy, and the commands above).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-TOPO="$HERE/../containerlab/netops.clab.yml"
+SRC=$(cd "$HERE/../containerlab" && pwd)       # bundle as built in this checkout
 LAB=netops
 export CLAB_LABDIR_BASE=${CLAB_LABDIR_BASE:-$HOME/clab-runs}   # runtime dirs stay off the SMB share
 mkdir -p "$CLAB_LABDIR_BASE"
+BUNDLE=$CLAB_LABDIR_BASE/netops-bundle         # what the running lab is deployed from
+LOCK=$CLAB_LABDIR_BASE/.netops.lock
 EOS_USER=${EOS_USER:-admin}; EOS_PASSWORD=${EOS_PASSWORD:-admin}
 
-mgmt_of() { yq -r ".topology.nodes.\"$1\".\"mgmt-ipv4\"" "$TOPO"; }
-nodes_where() { yq -r ".topology.nodes | to_entries[] | select($1) | .key" "$TOPO"; }
+topo() { [[ -f $BUNDLE/netops.clab.yml ]] && echo "$BUNDLE/netops.clab.yml" || echo "$SRC/netops.clab.yml"; }
+mgmt_of() { yq -r ".topology.nodes.\"$1\".\"mgmt-ipv4\"" "$(topo)"; }
+nodes_where() { yq -r ".topology.nodes | to_entries[] | select($1) | .key" "$(topo)"; }
+
+locked() {   # re-entrant: nested calls (make -> lab -> ...) see NETOPS_LOCKED and just run
+  if [[ -n ${NETOPS_LOCKED:-} ]]; then "$@"; return; fi
+  exec 9>>"$LOCK"
+  if ! flock -n 9; then
+    echo "lab is busy (a CI job or someone's make); waiting up to 30 min for $LOCK" >&2
+    flock -w 1800 9 || { echo "timed out waiting for the lab lock" >&2; exit 1; }
+  fi
+  NETOPS_LOCKED=1 "$@"
+}
+
+topology_pending() { ! cmp -s "$SRC/netops.clab.yml" "$BUNDLE/netops.clab.yml"; }
+
+copy_bundle() {   # in place, never unlink+create: a bind-mounted file must keep its inode
+  mkdir -p "$BUNDLE"
+  rsync -rltp --inplace --delete --exclude '._*' "$@" "$SRC/" "$BUNDLE/"
+}
+
+sync_bundle() {
+  if [[ ! -f $BUNDLE/netops.clab.yml ]]; then
+    echo "WARNING: no lab bundle at $BUNDLE (lab deployed from elsewhere, or not at all): nothing synced;" \
+         "'automation/lab redeploy' moves the lab onto it" >&2; return 0
+  fi
+  if topology_pending; then
+    echo "WARNING: netops.clab.yml changed but the lab is not re-wired yet: run 'automation/lab redeploy'" >&2
+    copy_bundle --exclude /netops.clab.yml --exclude /netops.clab.yml.annotations.json
+  else
+    copy_bundle
+  fi
+  echo "lab bundle synced: $BUNDLE"
+}
+
+deploy() { copy_bundle; containerlab deploy -t "$BUNDLE/netops.clab.yml" "$@" && wait_ready; }
+
+converge() {   # CI: re-wire only if the topology differs from what is running, else refresh files
+  if [[ ! -f $BUNDLE/netops.clab.yml ]]; then
+    echo "lab not deployed from $BUNDLE yet: redeploying"; deploy --reconfigure
+  elif [[ -z $(docker ps -q --filter "label=containerlab=$LAB") ]]; then
+    echo "lab not running: deploying"; deploy
+  elif topology_pending; then
+    echo "topology changed: redeploying"; deploy --reconfigure
+  else
+    echo "topology unchanged"; sync_bundle
+  fi
+}
 
 wait_ready() {   # every cEOS answers eAPI, every FRR has bgpd up
   local deadline=$((SECONDS + ${1:-420})) n
@@ -31,19 +88,22 @@ wait_ready() {   # every cEOS answers eAPI, every FRR has bgpd up
 
 cmd=${1:-help}; shift || true
 case "$cmd" in
-  up)       containerlab deploy -t "$TOPO" "$@" && wait_ready ;;
-  down)     containerlab destroy -t "$TOPO" --cleanup "$@" ;;
-  redeploy) containerlab deploy -t "$TOPO" --reconfigure "$@" && wait_ready ;;
-  status)   containerlab inspect -t "$TOPO" "$@" ;;
+  up)       locked deploy "$@" ;;
+  redeploy) locked deploy --reconfigure "$@" ;;
+  converge) locked converge ;;
+  sync)     locked sync_bundle ;;
+  down)     locked containerlab destroy -t "$(topo)" --cleanup "$@" ;;
+  locked)   locked "$@" ;;
+  status)   containerlab inspect -t "$(topo)" "$@" ;;
   wait)     wait_ready "$@" ;;
   cli)      node=${1:?usage: lab cli <node>}
-            case $(yq -r ".topology.nodes.\"$node\" | (.labels.role // \"\") + \":\" + .kind" "$TOPO") in
+            case $(yq -r ".topology.nodes.\"$node\" | (.labels.role // \"\") + \":\" + .kind" "$(topo)") in
               *:arista_ceos) exec docker exec -it "clab-$LAB-$node" Cli ;;
               wan:*)         exec docker exec -it "clab-$LAB-$node" vtysh ;;
               *)             exec docker exec -it "clab-$LAB-$node" bash ;;
             esac ;;
   graph)    echo "topology view: http://$(hostname -I | awk '{print $1}'):50080"   # live web view, Ctrl-C to stop
-            containerlab graph -t "$TOPO" "$@" ;;
+            containerlab graph -t "$(topo)" "$@" ;;
   netem)    containerlab tools netem "$@" ;;
   *)        sed -n '2,3p' "$0"; exit 1 ;;
 esac

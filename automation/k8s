@@ -36,6 +36,9 @@ init() {
 }
 
 cmd=${1:-help}; shift || true
+case "$cmd" in   # plan/apply/destroy hold the lab lock (automation/lab) so they never overlap other lab jobs
+  plan|apply|destroy) [[ -n ${NETOPS_LOCKED:-} ]] || exec "$ROOT/automation/lab" locked "$0" "$cmd" "$@" ;;
+esac
 case "$cmd" in
   kubeconfig) kubeconfig ;;
   plan)       kubeconfig; init; tf plan -input=false -var "kubeconfig=$KUBECONFIG" "$@" ;;

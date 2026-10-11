@@ -9,6 +9,7 @@ VENV  := $(HOME)/.venvs/netops/bin
 PY    := $(VENV)/python
 PLAYBOOK := cd automation && $(VENV)/ansible-playbook
 LAB   := automation/lab
+LOCKED := $(LAB) locked bash -c   # one job at a time against the lab (see automation/lab)
 export EOS_USER ?= admin
 export EOS_PASSWORD ?= admin
 export ANSIBLE_COLLECTIONS_PATH ?= $(HOME)/.ansible/collections
@@ -18,7 +19,7 @@ export ANSIBLE_COLLECTIONS_PATH ?= $(HOME)/.ansible/collections
 export ELASTIC_OTLP_ENDPOINT ELASTIC_API_KEY
 export OTELCOL_PROFILE := $(if $(ELASTIC_OTLP_ENDPOINT),elastic,local)
 
-.PHONY: help build check-build up redeploy down plan apply verify status graph k8s k8s-plan
+.PHONY: help build check-build up redeploy down sync plan apply verify status graph k8s k8s-plan
 
 help:                ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -45,11 +46,16 @@ redeploy: build      ## wipe and redeploy the lab, then Kubernetes, then verify
 down:                ## destroy the lab
 	$(LAB) down
 
+sync:                ## refresh the running lab's bundle (configs, telemetry, scripts) from containerlab/
+	$(LAB) sync
+
 plan:                ## per-device diff, running vs intended (changes nothing)
-	$(PLAYBOOK) playbooks/site.yml --check --diff
+	@mkdir -p -m 775 generated/config_backup   # as AVD wants it, else every plan shows a local "change"
+	$(LOCKED) '$(PLAYBOOK) playbooks/site.yml --check --diff'
 
 apply:               ## push changed configs to the running lab (config replace / frr-reload)
-	$(PLAYBOOK) playbooks/site.yml --diff
+	@mkdir -p -m 775 generated/config_backup
+	$(LOCKED) '$(LAB) sync && $(PLAYBOOK) playbooks/site.yml --diff'
 
 k8s:                 ## Kubernetes: terraform apply (pod CIDRs, Cilium, BGP, LB pools, apps)
 	automation/k8s apply

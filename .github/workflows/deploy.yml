@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: netops-lab
+concurrency:                  # a newer deploy may replace a pending one: it converges to the newer main anyway.
+  group: netops-deploy        # Lab access itself is serialised by the host lock in automation/lab.
   cancel-in-progress: false
 jobs:
   deploy:
@@ -19,17 +19,10 @@ jobs:
       ELASTIC_API_KEY: ${{ secrets.ELASTIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
       - name: Build and check generated files are committed
         run: make check-build
-      - name: Re-wire the lab if the topology changed
-        run: |
-          if git diff --quiet HEAD~1 HEAD -- containerlab/netops.clab.yml; then
-            echo "topology unchanged"
-          else
-            automation/lab redeploy
-          fi
+      - name: Re-wire the lab if its topology differs from main (else refresh the lab bundle)
+        run: automation/lab converge
       - name: Apply (EOS config-replace, FRR reload, hosts)
         run: set -o pipefail; make apply 2>&1 | tee apply.log
       - name: Kubernetes (terraform apply)
