@@ -1,4 +1,4 @@
 # Every change to the network needs a human network engineer's approval — including the Auto-SRE
-# agent's 3 AM PRs.  Replace the placeholder with your GitHub team or usernames.
-*                @NETWORK-REVIEWERS
-/network/        @NETWORK-REVIEWERS
+# agent's 3 AM PRs.
+*                @samurato
+/network/        @samurato
