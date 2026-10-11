@@ -6,6 +6,7 @@
 | [IP plan](ip-plan.md) | need an address, an AS number, or a free VIP |
 | [Network engineer's guide](network-engineer-guide.md) | change VLANs, VRFs, routing, policy, switches, links or the WAN |
 | [Streaming telemetry](telemetry.md) | work with the gNMI → OTel → Elastic pipeline: what is collected, the data reference, ES\|QL, operating it, gaps and roadmap |
+| [Observability roadmap](observability-roadmap.md) | pick up the end-to-end observability build: step-by-step plan from network devices to Kubernetes, Cilium and the web app, with progress log |
 | [DevOps guide](devops-guide.md) | run the lab: host, build/deploy/destroy, CI/CD, Elastic export, traffic and faults, troubleshooting |
 | [Kubernetes guide](kubernetes-guide.md) | operate the cluster platform: nodes, Cilium, BGP, VIP pools, upgrades, failover drills |
 | [Developer guide](developer-guide.md) | deploy an app on the cluster and expose it |
