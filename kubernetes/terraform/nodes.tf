@@ -43,7 +43,19 @@ resource "terraform_data" "image" {
   }
   input = data.external.image_id[each.value.image].result.id
 
+  # A node's containerd only exists once its k3s is up: on a fresh deploy the later nodes are still joining.
+  depends_on = [terraform_data.pod_cidr]
+
   provisioner "local-exec" {
-    command = "docker save ${each.value.image} | docker exec -i ${local.nodes[each.value.node].container} ctr --address /run/k3s/containerd/containerd.sock -n k8s.io images import -"
+    command = <<-EOT
+      c=${local.nodes[each.value.node].container}
+      sock=/run/k3s/containerd/containerd.sock
+      i=0
+      until docker exec $c test -S $sock; do
+        i=$((i + 1)); [ $i -le 120 ] || { echo "$c: containerd never came up" >&2; exit 1; }
+        sleep 5
+      done
+      docker save ${each.value.image} | docker exec -i $c ctr --address $sock -n k8s.io images import -
+    EOT
   }
 }
