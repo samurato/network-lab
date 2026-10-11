@@ -6,9 +6,9 @@ on:
 permissions:
   contents: read
   pull-requests: write
-concurrency:
-  group: netops-lab            # one job at a time against the live lab
-  cancel-in-progress: false
+concurrency:                   # a new push to the PR supersedes its running plan.
+  group: netops-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true       # Lab access is serialised by the host lock in automation/lab.
 jobs:
   plan:
     runs-on: [self-hosted, netops-lab]
