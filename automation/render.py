@@ -2,18 +2,20 @@
 """Lab compiler around AVD.  Two phases, both deterministic and committed:
 
   render.py pre    network/hosts.yml       -> generated/connected_endpoints.yml   (AVD input)
-                   network/kubernetes.yml  -> generated/network_services.yml     (AVD input: tenants + k8s node links +
+                   kubernetes/cluster.yml  -> generated/network_services.yml     (AVD input: tenants + k8s node links +
                    network/wan.yml            BGP peers on leaves, VRF-lite sub-interfaces to the WAN on BGWs)
   [AVD build]      network/ -> generated/intended/{structured_configs,configs}, generated/documentation
-  render.py post   AVD output + network/{wan,hosts,kubernetes}.yml -> containerlab/ (portable bundle):
+  render.py post   AVD output + network/{wan,hosts}.yml + kubernetes/cluster.yml -> containerlab/ (portable bundle):
                      netops.clab.yml            nodes, cabling, host addressing, TopoViewer layout
                      configs/<switch>.cfg       full EOS startup config (= AVD intended config)
                      configs/<router>.conf      full FRR config
                      configs/<router>.netdev.sh kernel devices FRR needs (VRF, 802.1Q sub-interfaces)
+                     static/k8s/entrypoint.sh   k3s node entrypoint (copy of kubernetes/node/entrypoint.sh)
                      telemetry/gnmic/*.yml      gNMI targets + used-port filter
-                   and generated/lab-inventory.yml (FRR WAN + hosts, for make apply)
+                   and generated/lab-inventory.yml (FRR WAN + hosts, for make apply),
+                       generated/kubernetes.yml   (cluster.yml with the fabric side resolved, for Terraform)
 
-Everything inside Kubernetes (CNI, BGP, load balancers, apps) is Terraform: terraform/kubernetes/.
+Everything inside Kubernetes (CNI, BGP, load balancers, apps) is Terraform: kubernetes/terraform/.
 """
 import ipaddress
 import pathlib
@@ -25,6 +27,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 INTENT, BUILD, AUTOMATION = ROOT / "network", ROOT / "generated", ROOT / "automation"
+K8S = ROOT / "kubernetes"                 # Kubernetes infra: cluster.yml, node/, terraform/
 CLAB = ROOT / "containerlab"              # portable bundle: every path in netops.clab.yml is relative to it
 STRUCTURED = BUILD / "intended" / "structured_configs"
 LAB = "netops"
@@ -52,6 +55,18 @@ BlockDumper.add_representer(str, lambda d, s: d.represent_scalar(
 def dump(path: pathlib.Path, data, header: str = HEADER) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(header + yaml.dump(data, Dumper=BlockDumper, sort_keys=False, width=1000, allow_unicode=True))
+
+
+def sync_file(src: pathlib.Path, dst: pathlib.Path) -> None:
+    """Copy src to dst only if the content differs, rewriting in place.  The running lab bind-mounts these
+    files; replacing (unlink + create) a file a container holds open on the SMB share deletes it."""
+    data = src.read_bytes()
+    if dst.exists() and dst.read_bytes() == data:
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with open(dst, "r+b" if dst.exists() else "wb") as f:
+        f.write(data)
+        f.truncate()
 
 
 def clab_port(itf: str) -> str:
@@ -165,10 +180,10 @@ def wan_handoff_links() -> list[dict]:
 
 def vrf_attachments() -> dict:
     """`tenants` from FABRIC/vlans-vrfs.yml plus the VRF PROD attachments owned by other source files:
-      - leaf port + /31 + eBGP peer for every Kubernetes node on a leaf      (kubernetes.yml)
+      - leaf port + /31 + eBGP peer for every Kubernetes node on a leaf      (kubernetes/cluster.yml)
       - 802.1Q sub-interface + eBGP peer per BGW <-> WAN link, VRF-lite     (wan.yml prod_vrf + cabling.yml)
     The build loads it as play vars, so it takes precedence over the group_vars copy of `tenants`."""
-    k8s, wan = load(INTENT / "kubernetes.yml"), load(INTENT / "wan.yml")
+    k8s, wan = load(K8S / "cluster.yml"), load(INTENT / "wan.yml")
     tenants = load(INTENT / "group_vars" / "FABRIC" / "vlans-vrfs.yml")["tenants"]
     vrf = next(v for t in tenants for v in t["vrfs"] if v["name"] == k8s["cluster"]["vrf"])
     l3, peers = vrf.setdefault("l3_interfaces", []), vrf.setdefault("bgp_peers", [])
@@ -232,7 +247,7 @@ def post() -> None:
         w["p2p"].sort(key=lambda p: (len(p["name"]), p["name"]))
 
     # ---- VRF PROD on the WAN routers: sub-interfaces to the BGWs and between the routers, WAN-site ports
-    prod, k8s = wan["prod_vrf"], load(INTENT / "kubernetes.yml")
+    prod, k8s = wan["prod_vrf"], load(K8S / "cluster.yml")
     for w in wan_nodes.values():
         w["vrf"] = {"name": prod["name"], "table": prod["table"], "subifs": [], "interfaces": [], "peers": []}
 
@@ -311,8 +326,9 @@ def post() -> None:
                        "exec": ["ip link set eth1 up", f"ip address add {s['ip']} dev eth1",
                                 f"ip route replace 10.0.0.0/8 via {s['gw']} dev eth1"]}
 
-    # k3s nodes: node-net.sh addresses eth1 (the fabric /31) and routes the lab over it, then execs k3s,
-    # so the node IP exists before k3s binds to it.  CNI, BGP, load balancers and apps: terraform/kubernetes/.
+    # k3s nodes: entrypoint.sh addresses eth1 (the fabric /31) and routes the lab over it, then execs k3s,
+    # so the node IP exists before k3s binds to it.  CNI, BGP, load balancers and apps: kubernetes/terraform/.
+    sync_file(K8S / "node" / "entrypoint.sh", CLAB / "static" / "k8s" / "entrypoint.sh")
     cl = k8s["cluster"]
     first = next(n for n, v in k8s["nodes"].items() if v["role"] == "server")
     join = f"--server=https://{ipaddress.ip_network(k8s['nodes'][first]['link'])[1]}:6443"
@@ -337,9 +353,9 @@ def post() -> None:
                                "NODE_GW": str(net[0]), "FABRIC_ROUTES": " ".join(cl["routes_via_fabric"])},
                        # /var/lib/rancher/k3s (containerd, etcd) is a VOLUME in the k3s image: host disk, not
                        # overlay-on-overlay; containerlab removes it with the node.
-                       "binds": ["static/k8s/node-net.sh:/etc/netops/node-net.sh:ro"],
+                       "binds": ["static/k8s/entrypoint.sh:/etc/netops/entrypoint.sh:ro"],
                        "entrypoint": "/bin/sh",
-                       "cmd": " ".join(["/etc/netops/node-net.sh", *args])}
+                       "cmd": " ".join(["/etc/netops/entrypoint.sh", *args])}
 
     # WAN-site hosts (traffic generators): only reach the lab, never the Internet
     for name, h in wan.get("edge_hosts", {}).items():
@@ -402,7 +418,7 @@ def post() -> None:
     gn["outputs"]["otel"]["event-processors"] = ["used-ports", *gn["outputs"]["otel"].get("event-processors", [])]
     dump(CLAB / "telemetry" / "gnmic" / "gnmic.yml", gn)
 
-    # ---- Kubernetes intent with the fabric side resolved, for terraform/kubernetes/
+    # ---- Kubernetes intent with the fabric side resolved, for kubernetes/terraform/
     as_of = {**{d: int(c["router_bgp"]["as"]) for d, c in sc.items()}, **{r: w["asn"] for r, w in wan["routers"].items()}}
     dump(BUILD / "kubernetes.yml", {"cluster": cl, "nodes": {name: {
         "role": n["role"], "zone": n["zone"], "workloads": n.get("workloads", True),

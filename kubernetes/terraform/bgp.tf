@@ -94,7 +94,7 @@ resource "kubectl_manifest" "bgp_advertise" {
   depends_on = [helm_release.cilium]
 }
 
-# Load-balancer address pools (network/kubernetes.yml).  "public" (192.0.2.0/24) is the only VIP range the
+# Load-balancer address pools (kubernetes/cluster.yml).  "public" (192.0.2.0/24) is the only VIP range the
 # border gateways hand to the WAN, and only services labelled netops.lab/exposure=public may use it;
 # "internal" (10.99.0.0/24) is reachable inside the DCs only.
 resource "kubectl_manifest" "lb_pool" {

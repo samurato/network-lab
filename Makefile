@@ -1,7 +1,6 @@
 # netops-lab — dual-DC Arista EVPN multi-site lab, GitOps-managed.
-#   network/       what you edit: the network design (AVD inventory + group_vars, hosts.yml, wan.yml,
-#                  kubernetes.yml)
-#   terraform/     everything inside Kubernetes (Cilium, BGP, load balancers, apps)
+#   network/       what you edit: the network design (AVD inventory + group_vars, hosts.yml, wan.yml)
+#   kubernetes/    what you edit: the k3s cluster (cluster.yml) and everything inside it (terraform/)
 #   containerlab/  portable lab bundle, generated: `containerlab deploy -t netops.clab.yml` anywhere
 #   generated/     AVD output, generated: full configs, docs, Ansible inventory — never edit
 #   automation/    tooling: Ansible, render.py, lab helper, verify.sh, CI scripts

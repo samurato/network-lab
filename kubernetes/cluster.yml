@@ -2,7 +2,8 @@
 #
 # Read by:
 #   automation/render.py   -> leaf/WAN ports, /31s and BGP peers (AVD + FRR), k3s nodes in containerlab/
-#   terraform/kubernetes/  -> Cilium, per-node pod CIDRs, BGP to the leaves, load-balancer pools, apps
+#   terraform/             -> Cilium, per-node pod CIDRs, BGP to the leaves, load-balancer pools, apps
+#   (switch-side routing policy towards the nodes: RM-K8S-IN/OUT in network/group_vars/DC1.yml, DC2.yml)
 #
 #   Block            Use                                          Routed in the fabric (VRF PROD)?
 #   10.10.40.0/24    DC1 node links, one /31 per node             yes (connected on the leaf)

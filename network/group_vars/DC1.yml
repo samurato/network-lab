@@ -5,7 +5,7 @@
 #   Loopback1    10.1.1.0/24    VTEP (VXLAN source)        leaves/BGWs .10 + id
 #   Fabric p2p   10.1.255.0/24  leaf/BGW <-> spine /31s, OSPF area 0
 #
-#   Routing design: FABRIC/routing.yml    VLANs: FABRIC/vlans-vrfs.yml    Servers: ../hosts.yml    Kubernetes: ../kubernetes.yml
+#   Routing design: FABRIC/routing.yml    VLANs: FABRIC/vlans-vrfs.yml    Servers: ../hosts.yml    Kubernetes: ../../kubernetes/cluster.yml
 dc_name: DC1
 
 # ================================================================= SPINES
@@ -36,7 +36,7 @@ l3leaf:
     virtual_router_mac_address: 00:1c:73:00:00:01   # anycast gateway MAC
     spanning_tree_mode: mstp
     # Routing policy in VRF PROD.  Leaves use the K8S route-maps towards their Kubernetes nodes,
-    # border gateways the WAN-PROD route-maps towards the WAN routers (sessions: ../kubernetes.yml, ../wan.yml).
+    # border gateways the WAN-PROD route-maps towards the WAN routers (sessions: ../../kubernetes/cluster.yml, ../wan.yml).
     structured_config:
       prefix_lists:
         - name: PL-K8S-IN                  # what a Kubernetes node may announce: its pod /24, LB VIPs

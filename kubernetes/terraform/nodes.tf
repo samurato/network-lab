@@ -1,4 +1,4 @@
-# Per-node pod CIDRs from network/kubernetes.yml (DC1 10.11.x, DC2 10.21.x, WAN 10.31.x).
+# Per-node pod CIDRs from kubernetes/cluster.yml (DC1 10.11.x, DC2 10.21.x, WAN 10.31.x).
 # k3s runs with allocate-node-cidrs=false, so nothing else assigns them; Cilium (ipam: kubernetes) waits
 # for spec.podCIDR before a node gets pod networking.  spec.podCIDR is set-once: a change needs a redeploy.
 resource "terraform_data" "pod_cidr" {

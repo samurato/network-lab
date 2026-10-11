@@ -1,6 +1,6 @@
 # Everything inside the k3s cluster: pod CIDRs, Cilium (CNI + BGP + load balancers), apps, generators.
 #
-#   Input:  generated/kubernetes.yml  (network/kubernetes.yml with the fabric side resolved, by `make build`)
+#   Input:  generated/kubernetes.yml  (kubernetes/cluster.yml with the fabric side resolved, by `make build`)
 #   Run:    automation/k8s apply      (fetches the kubeconfig, keeps the state next to the running lab)
 #
 # The k3s nodes themselves are containerlab nodes (containerlab/netops.clab.yml): Terraform has no way

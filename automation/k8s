@@ -10,7 +10,7 @@ export KUBECONFIG=${NETOPS_KUBECONFIG:-$HOME/.kube/netops.yaml}
 export TF_DATA_DIR=${TF_DATA_DIR:-$HOME/.cache/netops/terraform-kubernetes}   # provider binaries on local disk
 INTENT=$ROOT/generated/kubernetes.yml
 STATE=$CLAB_LABDIR_BASE/clab-netops/terraform-kubernetes.tfstate
-tf() { terraform -chdir="$ROOT/terraform/kubernetes" "$@"; }
+tf() { terraform -chdir="$ROOT/kubernetes/terraform" "$@"; }
 
 first=$(yq -r '.nodes | to_entries[] | select(.value.role=="server") | .key' "$INTENT" | head -1)
 api=$(yq -r ".topology.nodes.\"$first\".\"mgmt-ipv4\"" "$ROOT/containerlab/netops.clab.yml")

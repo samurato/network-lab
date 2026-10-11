@@ -1,5 +1,5 @@
 # k3s node entrypoint: address the fabric link and route the lab over it, then start k3s with the given args.
-# NODE_LINK (10.10.40.1/31), NODE_GW (the leaf) and FABRIC_ROUTES come from the topology (network/kubernetes.yml).
+# NODE_LINK (10.10.40.1/31), NODE_GW (the leaf) and FABRIC_ROUTES come from the topology (kubernetes/cluster.yml).
 set -eu
 until ip link show eth1 >/dev/null 2>&1; do sleep 1; done      # containerlab plugs links after start
 ip link set eth1 mtu 1500 up                                   # match the leaf's L3 port MTU
@@ -18,6 +18,6 @@ fi
 # exit, a restart would drop its containerlab link.
 while true; do
   /bin/k3s "$@" && break
-  echo "node-net: k3s exited ($?), retrying in 10s" >&2
+  echo "entrypoint: k3s exited ($?), retrying in 10s" >&2
   sleep 10
 done

@@ -333,9 +333,9 @@ topology:
         NODE_GW: 10.10.40.0
         FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
       binds:
-        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+        - static/k8s/entrypoint.sh:/etc/netops/entrypoint.sh:ro
       entrypoint: /bin/sh
-      cmd: /etc/netops/node-net.sh server --node-name=dc1-k8s-cp1 --node-ip=10.10.40.1 --node-label=topology.kubernetes.io/zone=dc1 --cluster-init --advertise-address=10.10.40.1 --tls-san=10.10.40.1 --tls-san=172.20.20.61 --flannel-backend=none --disable-network-policy --disable=traefik --disable=servicelb --cluster-cidr=10.0.0.0/11 --service-cidr=10.43.0.0/16 --cluster-dns=10.43.0.10 --write-kubeconfig-mode=644 --kube-controller-manager-arg=allocate-node-cidrs=false
+      cmd: /etc/netops/entrypoint.sh server --node-name=dc1-k8s-cp1 --node-ip=10.10.40.1 --node-label=topology.kubernetes.io/zone=dc1 --cluster-init --advertise-address=10.10.40.1 --tls-san=10.10.40.1 --tls-san=172.20.20.61 --flannel-backend=none --disable-network-policy --disable=traefik --disable=servicelb --cluster-cidr=10.0.0.0/11 --service-cidr=10.43.0.0/16 --cluster-dns=10.43.0.10 --write-kubeconfig-mode=644 --kube-controller-manager-arg=allocate-node-cidrs=false
       group: server
     dc1-k8s-wk1:
       kind: linux
@@ -353,9 +353,9 @@ topology:
         NODE_GW: 10.10.40.2
         FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
       binds:
-        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+        - static/k8s/entrypoint.sh:/etc/netops/entrypoint.sh:ro
       entrypoint: /bin/sh
-      cmd: /etc/netops/node-net.sh agent --node-name=dc1-k8s-wk1 --node-ip=10.10.40.3 --node-label=topology.kubernetes.io/zone=dc1 --server=https://10.10.40.1:6443
+      cmd: /etc/netops/entrypoint.sh agent --node-name=dc1-k8s-wk1 --node-ip=10.10.40.3 --node-label=topology.kubernetes.io/zone=dc1 --server=https://10.10.40.1:6443
       group: server
     dc1-k8s-wk2:
       kind: linux
@@ -373,9 +373,9 @@ topology:
         NODE_GW: 10.10.40.4
         FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
       binds:
-        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+        - static/k8s/entrypoint.sh:/etc/netops/entrypoint.sh:ro
       entrypoint: /bin/sh
-      cmd: /etc/netops/node-net.sh agent --node-name=dc1-k8s-wk2 --node-ip=10.10.40.5 --node-label=topology.kubernetes.io/zone=dc1 --server=https://10.10.40.1:6443
+      cmd: /etc/netops/entrypoint.sh agent --node-name=dc1-k8s-wk2 --node-ip=10.10.40.5 --node-label=topology.kubernetes.io/zone=dc1 --server=https://10.10.40.1:6443
       group: server
     dc2-k8s-cp2:
       kind: linux
@@ -393,9 +393,9 @@ topology:
         NODE_GW: 10.20.40.0
         FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
       binds:
-        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+        - static/k8s/entrypoint.sh:/etc/netops/entrypoint.sh:ro
       entrypoint: /bin/sh
-      cmd: /etc/netops/node-net.sh server --node-name=dc2-k8s-cp2 --node-ip=10.20.40.1 --node-label=topology.kubernetes.io/zone=dc2 --server=https://10.10.40.1:6443 --advertise-address=10.20.40.1 --tls-san=10.20.40.1 --tls-san=172.20.20.64 --flannel-backend=none --disable-network-policy --disable=traefik --disable=servicelb --cluster-cidr=10.0.0.0/11 --service-cidr=10.43.0.0/16 --cluster-dns=10.43.0.10 --write-kubeconfig-mode=644 --kube-controller-manager-arg=allocate-node-cidrs=false
+      cmd: /etc/netops/entrypoint.sh server --node-name=dc2-k8s-cp2 --node-ip=10.20.40.1 --node-label=topology.kubernetes.io/zone=dc2 --server=https://10.10.40.1:6443 --advertise-address=10.20.40.1 --tls-san=10.20.40.1 --tls-san=172.20.20.64 --flannel-backend=none --disable-network-policy --disable=traefik --disable=servicelb --cluster-cidr=10.0.0.0/11 --service-cidr=10.43.0.0/16 --cluster-dns=10.43.0.10 --write-kubeconfig-mode=644 --kube-controller-manager-arg=allocate-node-cidrs=false
       group: server
     dc2-k8s-wk3:
       kind: linux
@@ -413,9 +413,9 @@ topology:
         NODE_GW: 10.20.40.2
         FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
       binds:
-        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+        - static/k8s/entrypoint.sh:/etc/netops/entrypoint.sh:ro
       entrypoint: /bin/sh
-      cmd: /etc/netops/node-net.sh agent --node-name=dc2-k8s-wk3 --node-ip=10.20.40.3 --node-label=topology.kubernetes.io/zone=dc2 --server=https://10.10.40.1:6443
+      cmd: /etc/netops/entrypoint.sh agent --node-name=dc2-k8s-wk3 --node-ip=10.20.40.3 --node-label=topology.kubernetes.io/zone=dc2 --server=https://10.10.40.1:6443
       group: server
     wan-k8s-cp3:
       kind: linux
@@ -433,9 +433,9 @@ topology:
         NODE_GW: 10.30.40.0
         FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
       binds:
-        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+        - static/k8s/entrypoint.sh:/etc/netops/entrypoint.sh:ro
       entrypoint: /bin/sh
-      cmd: /etc/netops/node-net.sh server --node-name=wan-k8s-cp3 --node-ip=10.30.40.1 --node-label=topology.kubernetes.io/zone=wan --server=https://10.10.40.1:6443 --advertise-address=10.30.40.1 --tls-san=10.30.40.1 --tls-san=172.20.20.66 --flannel-backend=none --disable-network-policy --disable=traefik --disable=servicelb --cluster-cidr=10.0.0.0/11 --service-cidr=10.43.0.0/16 --cluster-dns=10.43.0.10 --write-kubeconfig-mode=644 --kube-controller-manager-arg=allocate-node-cidrs=false --node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule
+      cmd: /etc/netops/entrypoint.sh server --node-name=wan-k8s-cp3 --node-ip=10.30.40.1 --node-label=topology.kubernetes.io/zone=wan --server=https://10.10.40.1:6443 --advertise-address=10.30.40.1 --tls-san=10.30.40.1 --tls-san=172.20.20.66 --flannel-backend=none --disable-network-policy --disable=traefik --disable=servicelb --cluster-cidr=10.0.0.0/11 --service-cidr=10.43.0.0/16 --cluster-dns=10.43.0.10 --write-kubeconfig-mode=644 --kube-controller-manager-arg=allocate-node-cidrs=false --node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule
       group: server
     inet-k6:
       kind: linux
