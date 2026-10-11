@@ -32,6 +32,8 @@ jobs:
           fi
       - name: Apply (EOS config-replace, FRR reload, hosts)
         run: set -o pipefail; make apply 2>&1 | tee apply.log
+      - name: Kubernetes (terraform apply)
+        run: set -o pipefail; automation/k8s apply 2>&1 | tee -a apply.log
       - name: Verify
         run: automation/verify.sh --wait 420
       - name: Record change event

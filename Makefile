@@ -1,5 +1,7 @@
 # netops-lab — dual-DC Arista EVPN multi-site lab, GitOps-managed.
-#   network/       what you edit: the network design (AVD inventory + group_vars, hosts.yml, wan.yml)
+#   network/       what you edit: the network design (AVD inventory + group_vars, hosts.yml, wan.yml,
+#                  kubernetes.yml)
+#   terraform/     everything inside Kubernetes (Cilium, BGP, load balancers, apps)
 #   containerlab/  portable lab bundle, generated: `containerlab deploy -t netops.clab.yml` anywhere
 #   generated/     AVD output, generated: full configs, docs, Ansible inventory — never edit
 #   automation/    tooling: Ansible, render.py, lab helper, verify.sh, CI scripts
@@ -17,7 +19,7 @@ export ANSIBLE_COLLECTIONS_PATH ?= $(HOME)/.ansible/collections
 export ELASTIC_OTLP_ENDPOINT ELASTIC_API_KEY
 export OTELCOL_PROFILE := $(if $(ELASTIC_OTLP_ENDPOINT),elastic,local)
 
-.PHONY: help build check-build up redeploy down plan apply verify status graph
+.PHONY: help build check-build up redeploy down plan apply verify status graph k8s k8s-plan
 
 help:                ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -31,12 +33,14 @@ check-build: build   ## CI gate: committed generated files must match a fresh bu
 	@git diff --exit-code --stat -- generated containerlab \
 	  || { echo "generated files are stale: run 'make build' and commit"; exit 1; }
 
-up: build            ## deploy the lab from containerlab/ and verify
+up: build            ## deploy the lab from containerlab/, bring up Kubernetes, verify
 	$(LAB) up
+	automation/k8s apply
 	automation/verify.sh --wait 420
 
-redeploy: build      ## wipe and redeploy the lab, then verify
+redeploy: build      ## wipe and redeploy the lab, then Kubernetes, then verify
 	$(LAB) redeploy
+	automation/k8s apply
 	automation/verify.sh --wait 420
 
 down:                ## destroy the lab
@@ -48,7 +52,13 @@ plan:                ## per-device diff, running vs intended (changes nothing)
 apply:               ## push changed configs to the running lab (config replace / frr-reload)
 	$(PLAYBOOK) playbooks/site.yml --diff
 
-verify:              ## OSPF / BGP / EVPN / multi-site isolation / data plane / telemetry
+k8s:                 ## Kubernetes: terraform apply (pod CIDRs, Cilium, BGP, LB pools, apps)
+	automation/k8s apply
+
+k8s-plan:            ## Kubernetes: terraform plan (changes nothing)
+	automation/k8s plan
+
+verify:              ## OSPF / BGP / EVPN / multi-site / data plane / Kubernetes / telemetry
 	automation/verify.sh
 
 status:              ## containerlab node list

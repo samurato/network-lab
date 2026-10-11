@@ -5,7 +5,7 @@
 #   Loopback1    10.1.1.0/24    VTEP (VXLAN source)        leaves/BGWs .10 + id
 #   Fabric p2p   10.1.255.0/24  leaf/BGW <-> spine /31s, OSPF area 0
 #
-#   Routing design: FABRIC/routing.yml    VLANs: FABRIC/vlans-vrfs.yml    Servers: ../hosts.yml
+#   Routing design: FABRIC/routing.yml    VLANs: FABRIC/vlans-vrfs.yml    Servers: ../hosts.yml    Kubernetes: ../kubernetes.yml
 dc_name: DC1
 
 # ================================================================= SPINES
@@ -35,6 +35,70 @@ l3leaf:
     uplink_ipv4_pool: 10.1.255.0/24
     virtual_router_mac_address: 00:1c:73:00:00:01   # anycast gateway MAC
     spanning_tree_mode: mstp
+    # Routing policy in VRF PROD.  Leaves use the K8S route-maps towards their Kubernetes nodes,
+    # border gateways the WAN-PROD route-maps towards the WAN routers (sessions: ../kubernetes.yml, ../wan.yml).
+    structured_config:
+      prefix_lists:
+        - name: PL-K8S-IN                  # what a Kubernetes node may announce: its pod /24, LB VIPs
+          sequence_numbers:
+            - sequence: 10
+              action: permit 10.11.0.0/16 ge 24 le 24
+            - sequence: 20
+              action: permit 10.99.0.0/24 ge 32
+            - sequence: 30
+              action: permit 192.0.2.0/24 ge 32
+        - name: PL-WAN-PROD-OUT            # what this DC hands to the WAN: its own subnets, pods and VIPs
+          sequence_numbers:
+            - sequence: 10
+              action: deny 10.10.30.0/24 le 32     # reserved for the database: never reachable from the WAN
+            - sequence: 20
+              action: permit 10.10.0.0/16 le 32
+            - sequence: 30
+              action: permit 10.11.0.0/16 le 32
+            - sequence: 40
+              action: permit 192.0.2.0/24 ge 32  # public VIPs only; internal VIPs (10.99/24) stay in the DCs
+        - name: PL-WAN-PROD-IN             # what the WAN may hand back: WAN-site prefixes only
+          sequence_numbers:
+            - sequence: 10
+              action: permit 10.30.0.0/16 le 32
+            - sequence: 20
+              action: permit 10.31.0.0/16 le 32
+            - sequence: 30
+              action: permit 198.51.100.0/24 le 32
+            - sequence: 40
+              action: permit 203.0.113.0/24 le 32
+      as_path:
+        access_lists:
+          - name: AS-DC1-LOCAL             # originated in this DC: by a switch (empty) or a k8s node
+            entries:
+              - type: permit
+                match: ^$
+              - type: permit
+                match: ^65101$
+      route_maps:
+        - name: RM-K8S-IN
+          sequence_numbers:
+            - sequence: 10
+              type: permit
+              match:
+                - ip address prefix-list PL-K8S-IN
+        - name: RM-K8S-OUT                 # nodes need no routes from the fabric (default route via the leaf)
+          sequence_numbers:
+            - sequence: 10
+              type: deny
+        - name: RM-WAN-PROD-OUT            # own prefixes only: the other DC's routes stay on EVPN
+          sequence_numbers:
+            - sequence: 10
+              type: permit
+              match:
+                - ip address prefix-list PL-WAN-PROD-OUT
+                - as-path AS-DC1-LOCAL
+        - name: RM-WAN-PROD-IN
+          sequence_numbers:
+            - sequence: 10
+              type: permit
+              match:
+                - ip address prefix-list PL-WAN-PROD-IN
 
   # ---------------------------------------------------------------- leaves
   # filter.tags = which VLANs the leaf carries (tags in FABRIC/vlans-vrfs.yml)

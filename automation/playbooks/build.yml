@@ -6,6 +6,7 @@
   gather_facts: false
   vars_files:
     - ../../generated/connected_endpoints.yml  # generated from network/hosts.yml by `render.py pre`
+    - ../../generated/network_services.yml     # `tenants` + k8s/WAN VRF attachments, by `render.py pre`
   tasks:
     - name: eos_designs — structured configs + fabric documentation
       ansible.builtin.import_role:

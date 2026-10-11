@@ -14,3 +14,36 @@ links:                       # WAN-internal links (not touching the fabric)
   - a: wan1:eth5
     b: wan2:eth5
     subnet: 10.255.1.0/31
+    prod_subnet: 10.255.11.0/31   # the same link in VRF PROD (802.1Q sub-interface, see prod_vrf below)
+
+# VRF PROD handoff (VRF-lite).  The WAN carries the fabric's tenant VRF on 802.1Q sub-interfaces next to
+# the underlay links above, so WAN-side sites (k8s tie-breaker, Internet users, attackers) can reach the
+# DCs.  DC1 <-> DC2 tenant traffic stays on EVPN: the BGW route-maps (DC1.yml / DC2.yml) only hand their
+# own DC's prefixes to the WAN and only accept WAN-site prefixes back.
+prod_vrf:
+  name: PROD
+  table: 100                 # Linux VRF table on the FRR routers
+  dot1q: 100                 # sub-interface VLAN on every BGW <-> WAN link
+  bgw_links: 10.255.10.0/24  # same last octet as the underlay link: 10.255.0.4/31 -> 10.255.10.4/31
+
+# Sites behind the WAN routers, in VRF PROD.  The router port takes .1, the host the given address.
+# Edge hosts reach only the lab (no default route out of management).
+edge_hosts:
+  inet-k6:                   # Internet users: k6 HTTP load against the public VIP
+    router: wan2
+    port: eth7
+    ip: 198.51.100.11/24
+    image: grafana/k6:2.3.0
+    role: traffic
+    run: k6-baseline.sh      # containerlab/static/generators/
+    env:
+      TARGET: http://192.0.2.10
+      RPS: "5"
+  attacker1:                 # isolated "botnet": nping / iperf3 / curl, rate-capped, no Internet egress
+    router: wan1
+    port: eth7
+    ip: 203.0.113.66/24
+    image: nicolaka/netshoot:v0.15
+    role: attacker
+    rate_limit: 20mbit       # tc cap on the host's uplink: floods can't swamp the lab host
+    run: idle.sh             # tools on demand: docker exec clab-netops-attacker1 nping ...

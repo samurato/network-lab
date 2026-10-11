@@ -36,8 +36,10 @@
 - [Multicast](#multicast)
   - [IP IGMP Snooping](#ip-igmp-snooping)
 - [Filters](#filters)
+  - [Prefix-lists](#prefix-lists)
   - [Route-maps](#route-maps)
   - [IP Extended Community Lists](#ip-extended-community-lists)
+  - [AS Path Lists](#as-path-lists)
 - [VRF Instances](#vrf-instances)
   - [VRF Instances Summary](#vrf-instances-summary)
   - [VRF Instances Device Configuration](#vrf-instances-device-configuration)
@@ -592,6 +594,58 @@ router bfd
 
 ## Filters
 
+### Prefix-lists
+
+#### Prefix-lists Summary
+
+##### PL-K8S-IN
+
+| Sequence | Action |
+| -------- | ------ |
+| 10 | permit 10.11.0.0/16 ge 24 le 24 |
+| 20 | permit 10.99.0.0/24 ge 32 |
+| 30 | permit 192.0.2.0/24 ge 32 |
+
+##### PL-WAN-PROD-IN
+
+| Sequence | Action |
+| -------- | ------ |
+| 10 | permit 10.30.0.0/16 le 32 |
+| 20 | permit 10.31.0.0/16 le 32 |
+| 30 | permit 198.51.100.0/24 le 32 |
+| 40 | permit 203.0.113.0/24 le 32 |
+
+##### PL-WAN-PROD-OUT
+
+| Sequence | Action |
+| -------- | ------ |
+| 10 | deny 10.10.30.0/24 le 32 |
+| 20 | permit 10.10.0.0/16 le 32 |
+| 30 | permit 10.11.0.0/16 le 32 |
+| 40 | permit 192.0.2.0/24 ge 32 |
+
+#### Prefix-lists Device Configuration
+
+```eos
+!
+ip prefix-list PL-K8S-IN
+   seq 10 permit 10.11.0.0/16 ge 24 le 24
+   seq 20 permit 10.99.0.0/24 ge 32
+   seq 30 permit 192.0.2.0/24 ge 32
+!
+ip prefix-list PL-WAN-PROD-IN
+   seq 10 permit 10.30.0.0/16 le 32
+   seq 20 permit 10.31.0.0/16 le 32
+   seq 30 permit 198.51.100.0/24 le 32
+   seq 40 permit 203.0.113.0/24 le 32
+!
+ip prefix-list PL-WAN-PROD-OUT
+   seq 10 deny 10.10.30.0/24 le 32
+   seq 20 permit 10.10.0.0/16 le 32
+   seq 30 permit 10.11.0.0/16 le 32
+   seq 40 permit 192.0.2.0/24 ge 32
+```
+
 ### Route-maps
 
 #### Route-maps Summary
@@ -609,6 +663,30 @@ router bfd
 | -------- | ---- | ----- | --- | ------------- | -------- |
 | 10 | permit | - | extcommunity soo 10.1.1.12:1 additive | - | - |
 
+##### RM-K8S-IN
+
+| Sequence | Type | Match | Set | Sub-Route-Map | Continue |
+| -------- | ---- | ----- | --- | ------------- | -------- |
+| 10 | permit | ip address prefix-list PL-K8S-IN | - | - | - |
+
+##### RM-K8S-OUT
+
+| Sequence | Type | Match | Set | Sub-Route-Map | Continue |
+| -------- | ---- | ----- | --- | ------------- | -------- |
+| 10 | deny | - | - | - | - |
+
+##### RM-WAN-PROD-IN
+
+| Sequence | Type | Match | Set | Sub-Route-Map | Continue |
+| -------- | ---- | ----- | --- | ------------- | -------- |
+| 10 | permit | ip address prefix-list PL-WAN-PROD-IN | - | - | - |
+
+##### RM-WAN-PROD-OUT
+
+| Sequence | Type | Match | Set | Sub-Route-Map | Continue |
+| -------- | ---- | ----- | --- | ------------- | -------- |
+| 10 | permit | ip address prefix-list PL-WAN-PROD-OUT<br>as-path AS-DC1-LOCAL | - | - | - |
+
 #### Route-maps Device Configuration
 
 ```eos
@@ -620,6 +698,18 @@ route-map RM-EVPN-SOO-IN permit 20
 !
 route-map RM-EVPN-SOO-OUT permit 10
    set extcommunity soo 10.1.1.12:1 additive
+!
+route-map RM-K8S-IN permit 10
+   match ip address prefix-list PL-K8S-IN
+!
+route-map RM-K8S-OUT deny 10
+!
+route-map RM-WAN-PROD-IN permit 10
+   match ip address prefix-list PL-WAN-PROD-IN
+!
+route-map RM-WAN-PROD-OUT permit 10
+   match as-path AS-DC1-LOCAL
+   match ip address prefix-list PL-WAN-PROD-OUT
 ```
 
 ### IP Extended Community Lists
@@ -634,6 +724,23 @@ route-map RM-EVPN-SOO-OUT permit 10
 
 ```eos
 ip extcommunity-list ECL-EVPN-SOO permit soo 10.1.1.12:1
+```
+
+### AS Path Lists
+
+#### AS Path Lists Summary
+
+| List Name | Type | Match | Origin |
+| --------- | ---- | ----- | ------ |
+| AS-DC1-LOCAL | permit | `^$` | any |
+| AS-DC1-LOCAL | permit | `^65101$` | any |
+
+#### AS Path Lists Device Configuration
+
+```eos
+!
+ip as-path access-list AS-DC1-LOCAL permit ^$ any
+ip as-path access-list AS-DC1-LOCAL permit ^65101$ any
 ```
 
 ## VRF Instances

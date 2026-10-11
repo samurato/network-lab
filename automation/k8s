@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Kubernetes on the lab: kubeconfig from the first k3s server, Terraform for everything inside the cluster.
+#   automation/k8s kubeconfig | plan | apply | destroy | kubectl <args>
+# The Terraform state sits in the running lab's directory, so it is dropped with `make down`.
+set -euo pipefail
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PATH="$HOME/.local/bin:$PATH"
+export CLAB_LABDIR_BASE=${CLAB_LABDIR_BASE:-$HOME/clab-runs}
+export KUBECONFIG=${NETOPS_KUBECONFIG:-$HOME/.kube/netops.yaml}
+export TF_DATA_DIR=${TF_DATA_DIR:-$HOME/.cache/netops/terraform-kubernetes}   # provider binaries on local disk
+INTENT=$ROOT/generated/kubernetes.yml
+STATE=$CLAB_LABDIR_BASE/clab-netops/terraform-kubernetes.tfstate
+tf() { terraform -chdir="$ROOT/terraform/kubernetes" "$@"; }
+
+first=$(yq -r '.nodes | to_entries[] | select(.value.role=="server") | .key' "$INTENT" | head -1)
+api=$(yq -r ".topology.nodes.\"$first\".\"mgmt-ipv4\"" "$ROOT/containerlab/netops.clab.yml")
+
+kubeconfig() {   # copy k3s's admin kubeconfig, pointed at the first server's management IP
+  local deadline=$((SECONDS + 600))
+  until docker exec "clab-netops-$first" test -s /etc/rancher/k3s/k3s.yaml 2>/dev/null; do
+    ((SECONDS < deadline)) || { echo "k3s on $first never wrote a kubeconfig" >&2; exit 1; }; sleep 3
+  done
+  mkdir -p "$(dirname "$KUBECONFIG")"
+  docker exec "clab-netops-$first" cat /etc/rancher/k3s/k3s.yaml \
+    | sed -e "s#https://127.0.0.1:6443#https://$api:6443#" -e 's#: default$#: netops#' > "$KUBECONFIG"
+  chmod 600 "$KUBECONFIG"
+  until kubectl get --raw /readyz >/dev/null 2>&1; do
+    ((SECONDS < deadline)) || { echo "API server at $api not ready" >&2; exit 1; }; sleep 3
+  done
+  echo "kubeconfig: $KUBECONFIG (API https://$api:6443)"
+}
+
+init() {
+  [[ -d $(dirname "$STATE") ]] || { echo "lab not deployed ($(dirname "$STATE") missing)" >&2; exit 1; }
+  tf init -input=false -reconfigure -backend-config="path=$STATE" >/dev/null
+}
+
+cmd=${1:-help}; shift || true
+case "$cmd" in
+  kubeconfig) kubeconfig ;;
+  plan)       kubeconfig; init; tf plan -input=false -var "kubeconfig=$KUBECONFIG" "$@" ;;
+  apply)      kubeconfig; init; tf apply -input=false -auto-approve -var "kubeconfig=$KUBECONFIG" "$@" ;;
+  destroy)    kubeconfig; init; tf destroy -input=false -auto-approve -var "kubeconfig=$KUBECONFIG" "$@" ;;
+  kubectl)    exec kubectl "$@" ;;
+  *)          sed -n '2,4p' "$0"; exit 1 ;;
+esac

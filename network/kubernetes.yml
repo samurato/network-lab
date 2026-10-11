@@ -1,0 +1,94 @@
+# SOURCE OF TRUTH — Kubernetes cluster (k3s) stretched over DC1, DC2 and a WAN tie-breaker.
+#
+# Read by:
+#   automation/render.py   -> leaf/WAN ports, /31s and BGP peers (AVD + FRR), k3s nodes in containerlab/
+#   terraform/kubernetes/  -> Cilium, per-node pod CIDRs, BGP to the leaves, load-balancer pools, apps
+#
+#   Block            Use                                          Routed in the fabric (VRF PROD)?
+#   10.10.40.0/24    DC1 node links, one /31 per node             yes (connected on the leaf)
+#   10.20.40.0/24    DC2 node links                               yes
+#   10.30.40.0/24    WAN-site node links (tie-breaker)            yes (via the WAN routers)
+#   10.11.0.0/16     DC1 pods, one /24 per node                   yes, each node advertises its /24 over BGP
+#   10.21.0.0/16     DC2 pods                                     yes
+#   10.31.0.0/16     WAN-site pods                                yes
+#   10.43.0.0/16     Kubernetes Services (ClusterIP)              no, cluster-internal
+#   10.99.0.0/24     load-balancer VIPs, internal                 yes, /32 from nodes with a ready pod
+#   192.0.2.0/24     load-balancer VIPs, "public"                 yes, also handed to the WAN / Internet users
+#
+# Each node peers eBGP with the switch on the other end of its /31 (the switch takes the first address).
+# The node IP is pinned to that link, so node-to-node and pod traffic always crosses the fabric;
+# eth0 (containerlab management) is only used for image pulls and telemetry export.
+
+cluster:
+  name: netops
+  k3s_image: rancher/k3s:v1.36.5-k3s1
+  cilium_version: 1.20.2
+  vrf: PROD                      # fabric VRF the nodes live in
+  service_cidr: 10.43.0.0/16
+  cluster_dns: 10.43.0.10
+  cluster_cidr: 10.0.0.0/11      # covers every pod pool below (k3s needs one supernet)
+  load_balancer_pools:
+    internal: 10.99.0.0/24
+    public: 192.0.2.0/24
+  routes_via_fabric:             # node routes towards eth1; everything else leaves via management
+    - 10.0.0.0/8
+    - 192.0.2.0/24
+    - 198.51.100.0/24
+    - 203.0.113.0/24
+
+nodes:
+  dc1-k8s-cp1:
+    role: server                 # first server bootstraps the cluster (embedded etcd)
+    zone: dc1
+    switch: dc1-leaf1
+    port: Ethernet7
+    link: 10.10.40.0/31
+    asn: 65101
+    pod_cidr: 10.11.0.0/24
+    mgmt_ip: 172.20.20.61
+  dc1-k8s-wk1:
+    role: agent
+    zone: dc1
+    switch: dc1-leaf3
+    port: Ethernet7
+    link: 10.10.40.2/31
+    asn: 65101
+    pod_cidr: 10.11.1.0/24
+    mgmt_ip: 172.20.20.62
+  dc1-k8s-wk2:
+    role: agent
+    zone: dc1
+    switch: dc1-leaf4
+    port: Ethernet7
+    link: 10.10.40.4/31
+    asn: 65101
+    pod_cidr: 10.11.2.0/24
+    mgmt_ip: 172.20.20.63
+  dc2-k8s-cp2:
+    role: server
+    zone: dc2
+    switch: dc2-leaf1
+    port: Ethernet7
+    link: 10.20.40.0/31
+    asn: 65201
+    pod_cidr: 10.21.0.0/24
+    mgmt_ip: 172.20.20.64
+  dc2-k8s-wk3:
+    role: agent
+    zone: dc2
+    switch: dc2-leaf2
+    port: Ethernet7
+    link: 10.20.40.2/31
+    asn: 65201
+    pod_cidr: 10.21.1.0/24
+    mgmt_ip: 172.20.20.65
+  wan-k8s-cp3:
+    role: server
+    zone: wan
+    switch: wan1
+    port: eth6
+    link: 10.30.40.0/31
+    asn: 65301
+    pod_cidr: 10.31.0.0/24
+    mgmt_ip: 172.20.20.66
+    workloads: false             # tie-breaker: etcd quorum only, no application pods

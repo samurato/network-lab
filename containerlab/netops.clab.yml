@@ -10,6 +10,8 @@ topology:
       enforce-startup-config: true
       binds:
         - static/ceos/interface_mapping.json:/mnt/flash/EosIntfMapping.json:ro
+    linux:
+      restart-policy: 'no'
   nodes:
     dc1-bgw1:
       kind: arista_ceos
@@ -177,8 +179,12 @@ topology:
         graph-posY: '0'
       binds:
         - configs/wan1.conf:/etc/frr/frr.conf
+        - configs/wan1.netdev.sh:/etc/frr/netdev.sh:ro
+        - static/frr/start.sh:/etc/frr/start.sh:ro
         - static/frr/daemons:/etc/frr/daemons:ro
         - static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      entrypoint: /sbin/tini
+      cmd: -- /bin/sh /etc/frr/start.sh /usr/lib/frr/docker-start
       group: superspine
     wan2:
       kind: linux
@@ -192,8 +198,12 @@ topology:
         graph-posY: '0'
       binds:
         - configs/wan2.conf:/etc/frr/frr.conf
+        - configs/wan2.netdev.sh:/etc/frr/netdev.sh:ro
+        - static/frr/start.sh:/etc/frr/start.sh:ro
         - static/frr/daemons:/etc/frr/daemons:ro
         - static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro
+      entrypoint: /sbin/tini
+      cmd: -- /bin/sh /etc/frr/start.sh /usr/lib/frr/docker-start
       group: superspine
     dc1-web1:
       kind: linux
@@ -202,7 +212,7 @@ topology:
         site: dc1
         role: host
         graph-icon: server
-        graph-posX: '0'
+        graph-posX: '45'
         graph-posY: '640'
       exec:
         - ip link set eth1 up
@@ -230,7 +240,7 @@ topology:
         site: dc1
         role: host
         graph-icon: server
-        graph-posX: '340'
+        graph-posX: '295'
         graph-posY: '640'
       exec:
         - ip link set eth1 up
@@ -244,7 +254,7 @@ topology:
         site: dc1
         role: host
         graph-icon: server
-        graph-posX: '510'
+        graph-posX: '465'
         graph-posY: '640'
       exec:
         - ip link set eth1 up
@@ -272,7 +282,7 @@ topology:
         site: dc2
         role: host
         graph-icon: server
-        graph-posX: '770'
+        graph-posX: '725'
         graph-posY: '640'
       exec:
         - ip link set eth1 up
@@ -286,7 +296,7 @@ topology:
         site: dc2
         role: host
         graph-icon: server
-        graph-posX: '895'
+        graph-posX: '850'
         graph-posY: '640'
       exec:
         - ip link set eth1 up
@@ -300,15 +310,184 @@ topology:
         site: dc2
         role: host
         graph-icon: server
-        graph-posX: '985'
+        graph-posX: '1030'
         graph-posY: '640'
       exec:
         - ip link set eth1 up
         - ip address add 10.15.0.12/24 dev eth1
         - ip route replace 10.0.0.0/8 via 10.15.0.1 dev eth1
       group: server
+    dc1-k8s-cp1:
+      kind: linux
+      image: rancher/k3s:v1.36.5-k3s1
+      mgmt-ipv4: 172.20.20.61
+      labels:
+        site: dc1
+        role: k8s
+        graph-icon: server
+        graph-posX: '-45'
+        graph-posY: '640'
+      env:
+        K3S_TOKEN: ${K3S_TOKEN:=netops-lab}
+        NODE_LINK: 10.10.40.1/31
+        NODE_GW: 10.10.40.0
+        FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
+      binds:
+        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+      entrypoint: /bin/sh
+      cmd: /etc/netops/node-net.sh server --node-name=dc1-k8s-cp1 --node-ip=10.10.40.1 --node-label=topology.kubernetes.io/zone=dc1 --cluster-init --advertise-address=10.10.40.1 --tls-san=10.10.40.1 --tls-san=172.20.20.61 --flannel-backend=none --disable-network-policy --disable=traefik --disable=servicelb --cluster-cidr=10.0.0.0/11 --service-cidr=10.43.0.0/16 --cluster-dns=10.43.0.10 --write-kubeconfig-mode=644 --kube-controller-manager-arg=allocate-node-cidrs=false
+      group: server
+    dc1-k8s-wk1:
+      kind: linux
+      image: rancher/k3s:v1.36.5-k3s1
+      mgmt-ipv4: 172.20.20.62
+      labels:
+        site: dc1
+        role: k8s
+        graph-icon: server
+        graph-posX: '385'
+        graph-posY: '640'
+      env:
+        K3S_TOKEN: ${K3S_TOKEN:=netops-lab}
+        NODE_LINK: 10.10.40.3/31
+        NODE_GW: 10.10.40.2
+        FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
+      binds:
+        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+      entrypoint: /bin/sh
+      cmd: /etc/netops/node-net.sh agent --node-name=dc1-k8s-wk1 --node-ip=10.10.40.3 --node-label=topology.kubernetes.io/zone=dc1 --server=https://10.10.40.1:6443
+      group: server
+    dc1-k8s-wk2:
+      kind: linux
+      image: rancher/k3s:v1.36.5-k3s1
+      mgmt-ipv4: 172.20.20.63
+      labels:
+        site: dc1
+        role: k8s
+        graph-icon: server
+        graph-posX: '555'
+        graph-posY: '640'
+      env:
+        K3S_TOKEN: ${K3S_TOKEN:=netops-lab}
+        NODE_LINK: 10.10.40.5/31
+        NODE_GW: 10.10.40.4
+        FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
+      binds:
+        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+      entrypoint: /bin/sh
+      cmd: /etc/netops/node-net.sh agent --node-name=dc1-k8s-wk2 --node-ip=10.10.40.5 --node-label=topology.kubernetes.io/zone=dc1 --server=https://10.10.40.1:6443
+      group: server
+    dc2-k8s-cp2:
+      kind: linux
+      image: rancher/k3s:v1.36.5-k3s1
+      mgmt-ipv4: 172.20.20.64
+      labels:
+        site: dc2
+        role: k8s
+        graph-icon: server
+        graph-posX: '815'
+        graph-posY: '640'
+      env:
+        K3S_TOKEN: ${K3S_TOKEN:=netops-lab}
+        NODE_LINK: 10.20.40.1/31
+        NODE_GW: 10.20.40.0
+        FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
+      binds:
+        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+      entrypoint: /bin/sh
+      cmd: /etc/netops/node-net.sh server --node-name=dc2-k8s-cp2 --node-ip=10.20.40.1 --node-label=topology.kubernetes.io/zone=dc2 --server=https://10.10.40.1:6443 --advertise-address=10.20.40.1 --tls-san=10.20.40.1 --tls-san=172.20.20.64 --flannel-backend=none --disable-network-policy --disable=traefik --disable=servicelb --cluster-cidr=10.0.0.0/11 --service-cidr=10.43.0.0/16 --cluster-dns=10.43.0.10 --write-kubeconfig-mode=644 --kube-controller-manager-arg=allocate-node-cidrs=false
+      group: server
+    dc2-k8s-wk3:
+      kind: linux
+      image: rancher/k3s:v1.36.5-k3s1
+      mgmt-ipv4: 172.20.20.65
+      labels:
+        site: dc2
+        role: k8s
+        graph-icon: server
+        graph-posX: '940'
+        graph-posY: '640'
+      env:
+        K3S_TOKEN: ${K3S_TOKEN:=netops-lab}
+        NODE_LINK: 10.20.40.3/31
+        NODE_GW: 10.20.40.2
+        FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
+      binds:
+        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+      entrypoint: /bin/sh
+      cmd: /etc/netops/node-net.sh agent --node-name=dc2-k8s-wk3 --node-ip=10.20.40.3 --node-label=topology.kubernetes.io/zone=dc2 --server=https://10.10.40.1:6443
+      group: server
+    wan-k8s-cp3:
+      kind: linux
+      image: rancher/k3s:v1.36.5-k3s1
+      mgmt-ipv4: 172.20.20.66
+      labels:
+        site: wan
+        role: k8s
+        graph-icon: server
+        graph-posX: '472'
+        graph-posY: '-170'
+      env:
+        K3S_TOKEN: ${K3S_TOKEN:=netops-lab}
+        NODE_LINK: 10.30.40.1/31
+        NODE_GW: 10.30.40.0
+        FABRIC_ROUTES: 10.0.0.0/8 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24
+      binds:
+        - static/k8s/node-net.sh:/etc/netops/node-net.sh:ro
+      entrypoint: /bin/sh
+      cmd: /etc/netops/node-net.sh server --node-name=wan-k8s-cp3 --node-ip=10.30.40.1 --node-label=topology.kubernetes.io/zone=wan --server=https://10.10.40.1:6443 --advertise-address=10.30.40.1 --tls-san=10.30.40.1 --tls-san=172.20.20.66 --flannel-backend=none --disable-network-policy --disable=traefik --disable=servicelb --cluster-cidr=10.0.0.0/11 --service-cidr=10.43.0.0/16 --cluster-dns=10.43.0.10 --write-kubeconfig-mode=644 --kube-controller-manager-arg=allocate-node-cidrs=false --node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule
+      group: server
+    inet-k6:
+      kind: linux
+      image: grafana/k6:2.3.0
+      user: root
+      labels:
+        site: wan
+        role: traffic
+        graph-icon: client
+        graph-posX: '682'
+        graph-posY: '-170'
+      binds:
+        - static/generators:/generators:ro
+      env:
+        TARGET: http://192.0.2.10
+        RPS: '5'
+      entrypoint: /bin/sh
+      cmd: /generators/k6-baseline.sh
+      exec:
+        - ip link set eth1 up
+        - ip address add 198.51.100.11/24 dev eth1
+        - ip route del default
+        - ip route replace 10.0.0.0/8 via 198.51.100.1 dev eth1
+        - ip route replace 192.0.2.0/24 via 198.51.100.1 dev eth1
+        - ip route replace 203.0.113.0/24 via 198.51.100.1 dev eth1
+      group: server
+    attacker1:
+      kind: linux
+      image: nicolaka/netshoot:v0.15
+      user: root
+      labels:
+        site: wan
+        role: attacker
+        graph-icon: client
+        graph-posX: '382'
+        graph-posY: '-170'
+      binds:
+        - static/generators:/generators:ro
+      entrypoint: /bin/sh
+      cmd: /generators/idle.sh
+      exec:
+        - ip link set eth1 up
+        - ip address add 203.0.113.66/24 dev eth1
+        - ip route del default
+        - ip route replace 10.0.0.0/8 via 203.0.113.1 dev eth1
+        - ip route replace 192.0.2.0/24 via 203.0.113.1 dev eth1
+        - ip route replace 198.51.100.0/24 via 203.0.113.1 dev eth1
+        - tc qdisc replace dev eth1 root tbf rate 20mbit burst 64kb latency 50ms
+      group: server
     otelcol:
       kind: linux
+      restart-policy: always
       image: otel/opentelemetry-collector-contrib:0.162.0
       mgmt-ipv4: 172.20.20.250
       labels:
@@ -327,6 +506,7 @@ topology:
       group: '1'
     gnmic:
       kind: linux
+      restart-policy: always
       image: ghcr.io/openconfig/gnmic:0.49.0
       mgmt-ipv4: 172.20.20.251
       labels:
@@ -342,6 +522,9 @@ topology:
       cmd: --config /etc/gnmic/gnmic.yml subscribe
       group: '1'
   links:
+    - endpoints:
+        - attacker1:eth1
+        - wan1:eth7
     - endpoints:
         - dc1-app1:eth1
         - dc1-leaf3:eth5
@@ -372,6 +555,15 @@ topology:
     - endpoints:
         - dc1-bgw2:eth4
         - wan2:eth2
+    - endpoints:
+        - dc1-k8s-cp1:eth1
+        - dc1-leaf1:eth7
+    - endpoints:
+        - dc1-k8s-wk1:eth1
+        - dc1-leaf3:eth7
+    - endpoints:
+        - dc1-k8s-wk2:eth1
+        - dc1-leaf4:eth7
     - endpoints:
         - dc1-leaf1:eth1
         - dc1-spine1:eth1
@@ -436,6 +628,12 @@ topology:
         - dc2-db2:eth1
         - dc2-leaf2:eth5
     - endpoints:
+        - dc2-k8s-cp2:eth1
+        - dc2-leaf1:eth7
+    - endpoints:
+        - dc2-k8s-wk3:eth1
+        - dc2-leaf2:eth7
+    - endpoints:
         - dc2-leaf1:eth1
         - dc2-spine1:eth1
     - endpoints:
@@ -450,6 +648,12 @@ topology:
     - endpoints:
         - dc2-leaf2:eth6
         - dc2-stretch1:eth1
+    - endpoints:
+        - inet-k6:eth1
+        - wan2:eth7
+    - endpoints:
+        - wan-k8s-cp3:eth1
+        - wan1:eth6
     - endpoints:
         - wan1:eth5
         - wan2:eth5

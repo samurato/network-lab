@@ -20,6 +20,8 @@ Images it needs on that host:
 | `ghcr.io/srl-labs/network-multitool:latest` | pulled automatically |
 | `ghcr.io/openconfig/gnmic:0.49.0` | pulled automatically |
 | `otel/opentelemetry-collector-contrib:0.162.0` | pulled automatically |
+| `rancher/k3s:v1.36.5-k3s1` | pulled automatically |
+| `grafana/k6:2.3.0`, `nicolaka/netshoot:v0.15` | pulled automatically |
 
 Optional environment at deploy time:
 
@@ -28,6 +30,10 @@ Optional environment at deploy time:
 | `EOS_USER` / `EOS_PASSWORD` | `admin` / `admin` | credentials gnmic uses for the switches |
 | `OTELCOL_PROFILE` | `local` | `elastic` loads `telemetry/otelcol/elastic.yml` and exports to Elastic |
 | `ELASTIC_OTLP_ENDPOINT` / `ELASTIC_API_KEY` | not set | Elastic managed OTLP endpoint and API key |
+| `K3S_TOKEN` | `netops-lab` | k3s cluster join token |
+
+The k3s nodes come up as a bare cluster (`NotReady`, no CNI). Pod networking, BGP, load balancers and
+apps are applied by Terraform from the repo (`automation/k8s apply`); see `terraform/kubernetes/`.
 
 The management network is `172.20.20.0/24` (docker network `clab-mgmt`); it must be free on that host.
 
@@ -37,7 +43,9 @@ The management network is `172.20.20.0/24` (docker network `clab-mgmt`); it must
 netops.clab.yml          nodes, links, host addressing, diagram layout (graph-* labels)
 configs/<switch>.cfg     full EOS startup config of each switch (same as generated/intended/configs)
 configs/<router>.conf    full FRR config of each WAN router
-static/                  cEOS interface-name mapping, FRR daemons + vtysh.conf
+configs/<router>.netdev.sh  kernel VRF + 802.1Q sub-interfaces the FRR config refers to (run at start)
+static/                  cEOS interface-name mapping, FRR daemons + vtysh.conf + start.sh,
+                         k8s/node-net.sh (k3s node entrypoint), generators/ (k6 script)
 telemetry/gnmic/         gNMI collector: subscriptions, targets, unused-port filter
 telemetry/otelcol/       OpenTelemetry Collector: base.yml + profiles local.yml / elastic.yml
 ```
@@ -52,6 +60,8 @@ YAML layout but keeps text, shapes and groups you added.
 
 ## Pitfalls
 
-- Never `docker restart` a switch or router: its links are lost. Redeploy instead.
+- Never `docker restart` a switch, router, host or k3s node: its links are lost. Redeploy instead.
+  For the same reason linux nodes run with `restart-policy: "no"` (containerlab 0.80 defaults to
+  `always`); only gnmic and otelcol, which use management only, restart automatically.
 - In this repo, use `make up` / `make redeploy` / `make down` (they set `CLAB_LABDIR_BASE` and
   the Elastic profile) rather than bare containerlab commands.

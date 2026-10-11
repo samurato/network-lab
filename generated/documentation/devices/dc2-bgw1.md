@@ -36,8 +36,10 @@
 - [Multicast](#multicast)
   - [IP IGMP Snooping](#ip-igmp-snooping)
 - [Filters](#filters)
+  - [Prefix-lists](#prefix-lists)
   - [Route-maps](#route-maps)
   - [IP Extended Community Lists](#ip-extended-community-lists)
+  - [AS Path Lists](#as-path-lists)
 - [VRF Instances](#vrf-instances)
   - [VRF Instances Summary](#vrf-instances-summary)
   - [VRF Instances Device Configuration](#vrf-instances-device-configuration)
@@ -203,6 +205,13 @@ vlan 150
 
 *Inherited from Port-Channel Interface
 
+##### Encapsulation Dot1q Interfaces
+
+| Interface | Description | Vlan ID | Dot1q VLAN Tag | Dot1q Inner VLAN Tag |
+| --------- | ----------- | ------- | -------------- | -------------------- |
+| Ethernet3.100 | wan1 eth3.100 VRF PROD | - | 100 | - |
+| Ethernet4.100 | wan2 eth3.100 VRF PROD | - | 100 | - |
+
 ##### IPv4
 
 | Interface | Description | Channel Group | IP Address | VRF | MTU | Shutdown | ACL In | ACL Out |
@@ -210,7 +219,9 @@ vlan 150
 | Ethernet1 | P2P_dc2-spine1_Ethernet5 | - | 10.2.255.17/31 | default | 9214 | False | - | - |
 | Ethernet2 | P2P_dc2-spine2_Ethernet5 | - | 10.2.255.19/31 | default | 9214 | False | - | - |
 | Ethernet3 | P2P_wan1_eth3 | - | 10.255.0.4/31 | default | 9214 | False | - | - |
+| Ethernet3.100 | wan1 eth3.100 VRF PROD | - | 10.255.10.4/31 | PROD | - | False | - | - |
 | Ethernet4 | P2P_wan2_eth3 | - | 10.255.0.12/31 | default | 9214 | False | - | - |
+| Ethernet4.100 | wan2 eth3.100 VRF PROD | - | 10.255.10.12/31 | PROD | - | False | - | - |
 
 #### Ethernet Interfaces Device Configuration
 
@@ -241,12 +252,26 @@ interface Ethernet3
    no switchport
    ip address 10.255.0.4/31
 !
+interface Ethernet3.100
+   description wan1 eth3.100 VRF PROD
+   no shutdown
+   encapsulation dot1q vlan 100
+   vrf PROD
+   ip address 10.255.10.4/31
+!
 interface Ethernet4
    description P2P_wan2_eth3
    no shutdown
    mtu 9214
    no switchport
    ip address 10.255.0.12/31
+!
+interface Ethernet4.100
+   description wan2 eth3.100 VRF PROD
+   no shutdown
+   encapsulation dot1q vlan 100
+   vrf PROD
+   ip address 10.255.10.12/31
 ```
 
 ### Loopback Interfaces
@@ -497,6 +522,8 @@ ASN Notation: asplain
 | 10.2.0.2 | Inherited from peer group EVPN-OVERLAY-PEERS | default | - | Inherited from peer group EVPN-OVERLAY-PEERS | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | Inherited from peer group EVPN-OVERLAY-PEERS | - | - | - | - |
 | 10.255.0.5 | 64901 | default | - | Inherited from peer group WAN-PEERS | Inherited from peer group WAN-PEERS | - | - | - | - | - | - | - | - |
 | 10.255.0.13 | 64902 | default | - | Inherited from peer group WAN-PEERS | Inherited from peer group WAN-PEERS | - | - | - | - | - | - | - | - |
+| 10.255.10.5 | 64901 | PROD | - | all | - | - | - | - | - | - | - | - | - |
+| 10.255.10.13 | 64902 | PROD | - | all | - | - | - | - | - | - | - | - | - |
 
 #### Router BGP EVPN Address Family
 
@@ -605,7 +632,21 @@ router bgp 65200
       route-target import evpn 1000:1000
       route-target export evpn 1000:1000
       router-id 10.2.0.15
+      neighbor 10.255.10.5 remote-as 64901
+      neighbor 10.255.10.5 description wan1 VRF PROD
+      neighbor 10.255.10.5 route-map RM-WAN-PROD-IN in
+      neighbor 10.255.10.5 route-map RM-WAN-PROD-OUT out
+      neighbor 10.255.10.5 send-community
+      neighbor 10.255.10.13 remote-as 64902
+      neighbor 10.255.10.13 description wan2 VRF PROD
+      neighbor 10.255.10.13 route-map RM-WAN-PROD-IN in
+      neighbor 10.255.10.13 route-map RM-WAN-PROD-OUT out
+      neighbor 10.255.10.13 send-community
       redistribute connected
+      !
+      address-family ipv4
+         neighbor 10.255.10.5 activate
+         neighbor 10.255.10.13 activate
 ```
 
 ## BFD
@@ -643,6 +684,58 @@ router bfd
 
 ## Filters
 
+### Prefix-lists
+
+#### Prefix-lists Summary
+
+##### PL-K8S-IN
+
+| Sequence | Action |
+| -------- | ------ |
+| 10 | permit 10.21.0.0/16 ge 24 le 24 |
+| 20 | permit 10.99.0.0/24 ge 32 |
+| 30 | permit 192.0.2.0/24 ge 32 |
+
+##### PL-WAN-PROD-IN
+
+| Sequence | Action |
+| -------- | ------ |
+| 10 | permit 10.30.0.0/16 le 32 |
+| 20 | permit 10.31.0.0/16 le 32 |
+| 30 | permit 198.51.100.0/24 le 32 |
+| 40 | permit 203.0.113.0/24 le 32 |
+
+##### PL-WAN-PROD-OUT
+
+| Sequence | Action |
+| -------- | ------ |
+| 10 | deny 10.20.30.0/24 le 32 |
+| 20 | permit 10.20.0.0/16 le 32 |
+| 30 | permit 10.21.0.0/16 le 32 |
+| 40 | permit 192.0.2.0/24 ge 32 |
+
+#### Prefix-lists Device Configuration
+
+```eos
+!
+ip prefix-list PL-K8S-IN
+   seq 10 permit 10.21.0.0/16 ge 24 le 24
+   seq 20 permit 10.99.0.0/24 ge 32
+   seq 30 permit 192.0.2.0/24 ge 32
+!
+ip prefix-list PL-WAN-PROD-IN
+   seq 10 permit 10.30.0.0/16 le 32
+   seq 20 permit 10.31.0.0/16 le 32
+   seq 30 permit 198.51.100.0/24 le 32
+   seq 40 permit 203.0.113.0/24 le 32
+!
+ip prefix-list PL-WAN-PROD-OUT
+   seq 10 deny 10.20.30.0/24 le 32
+   seq 20 permit 10.20.0.0/16 le 32
+   seq 30 permit 10.21.0.0/16 le 32
+   seq 40 permit 192.0.2.0/24 ge 32
+```
+
 ### Route-maps
 
 #### Route-maps Summary
@@ -660,6 +753,30 @@ router bfd
 | -------- | ---- | ----- | --- | ------------- | -------- |
 | 10 | permit | - | extcommunity soo 10.2.1.15:1 additive | - | - |
 
+##### RM-K8S-IN
+
+| Sequence | Type | Match | Set | Sub-Route-Map | Continue |
+| -------- | ---- | ----- | --- | ------------- | -------- |
+| 10 | permit | ip address prefix-list PL-K8S-IN | - | - | - |
+
+##### RM-K8S-OUT
+
+| Sequence | Type | Match | Set | Sub-Route-Map | Continue |
+| -------- | ---- | ----- | --- | ------------- | -------- |
+| 10 | deny | - | - | - | - |
+
+##### RM-WAN-PROD-IN
+
+| Sequence | Type | Match | Set | Sub-Route-Map | Continue |
+| -------- | ---- | ----- | --- | ------------- | -------- |
+| 10 | permit | ip address prefix-list PL-WAN-PROD-IN | - | - | - |
+
+##### RM-WAN-PROD-OUT
+
+| Sequence | Type | Match | Set | Sub-Route-Map | Continue |
+| -------- | ---- | ----- | --- | ------------- | -------- |
+| 10 | permit | ip address prefix-list PL-WAN-PROD-OUT<br>as-path AS-DC2-LOCAL | - | - | - |
+
 #### Route-maps Device Configuration
 
 ```eos
@@ -671,6 +788,18 @@ route-map RM-EVPN-SOO-IN permit 20
 !
 route-map RM-EVPN-SOO-OUT permit 10
    set extcommunity soo 10.2.1.15:1 additive
+!
+route-map RM-K8S-IN permit 10
+   match ip address prefix-list PL-K8S-IN
+!
+route-map RM-K8S-OUT deny 10
+!
+route-map RM-WAN-PROD-IN permit 10
+   match ip address prefix-list PL-WAN-PROD-IN
+!
+route-map RM-WAN-PROD-OUT permit 10
+   match as-path AS-DC2-LOCAL
+   match ip address prefix-list PL-WAN-PROD-OUT
 ```
 
 ### IP Extended Community Lists
@@ -685,6 +814,23 @@ route-map RM-EVPN-SOO-OUT permit 10
 
 ```eos
 ip extcommunity-list ECL-EVPN-SOO permit soo 10.2.1.15:1
+```
+
+### AS Path Lists
+
+#### AS Path Lists Summary
+
+| List Name | Type | Match | Origin |
+| --------- | ---- | ----- | ------ |
+| AS-DC2-LOCAL | permit | `^$` | any |
+| AS-DC2-LOCAL | permit | `^65201$` | any |
+
+#### AS Path Lists Device Configuration
+
+```eos
+!
+ip as-path access-list AS-DC2-LOCAL permit ^$ any
+ip as-path access-list AS-DC2-LOCAL permit ^65201$ any
 ```
 
 ## VRF Instances

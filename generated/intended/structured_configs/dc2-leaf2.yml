@@ -1,5 +1,13 @@
 aaa_root:
   disabled: true
+as_path:
+  access_lists:
+  - name: AS-DC2-LOCAL
+    entries:
+    - type: permit
+      match: ^$
+    - type: permit
+      match: ^65201$
 config_end: true
 enable_password:
   disabled: true
@@ -29,6 +37,16 @@ ethernet_interfaces:
     peer: dc2-spine2
     peer_interface: Ethernet2
     peer_type: spine
+  switchport:
+    enabled: false
+- name: Ethernet7
+  description: k8s dc2-k8s-wk3
+  shutdown: false
+  mtu: 1500
+  vrf: PROD
+  ip_address: 10.20.40.2/31
+  metadata:
+    peer_type: l3_interface
   switchport:
     enabled: false
 - name: Ethernet5
@@ -108,6 +126,35 @@ metadata:
   fabric_name: FABRIC
   validate_hardware:
     enabled: false
+prefix_lists:
+- name: PL-K8S-IN
+  sequence_numbers:
+  - sequence: 10
+    action: permit 10.21.0.0/16 ge 24 le 24
+  - sequence: 20
+    action: permit 10.99.0.0/24 ge 32
+  - sequence: 30
+    action: permit 192.0.2.0/24 ge 32
+- name: PL-WAN-PROD-OUT
+  sequence_numbers:
+  - sequence: 10
+    action: deny 10.20.30.0/24 le 32
+  - sequence: 20
+    action: permit 10.20.0.0/16 le 32
+  - sequence: 30
+    action: permit 10.21.0.0/16 le 32
+  - sequence: 40
+    action: permit 192.0.2.0/24 ge 32
+- name: PL-WAN-PROD-IN
+  sequence_numbers:
+  - sequence: 10
+    action: permit 10.30.0.0/16 le 32
+  - sequence: 20
+    action: permit 10.31.0.0/16 le 32
+  - sequence: 30
+    action: permit 198.51.100.0/24 le 32
+  - sequence: 40
+    action: permit 203.0.113.0/24 le 32
 route_maps:
 - name: RM-EVPN-SOO-IN
   sequence_numbers:
@@ -123,6 +170,29 @@ route_maps:
     type: permit
     set:
     - extcommunity soo 10.2.1.12:1 additive
+- name: RM-K8S-IN
+  sequence_numbers:
+  - sequence: 10
+    type: permit
+    match:
+    - ip address prefix-list PL-K8S-IN
+- name: RM-K8S-OUT
+  sequence_numbers:
+  - sequence: 10
+    type: deny
+- name: RM-WAN-PROD-OUT
+  sequence_numbers:
+  - sequence: 10
+    type: permit
+    match:
+    - ip address prefix-list PL-WAN-PROD-OUT
+    - as-path AS-DC2-LOCAL
+- name: RM-WAN-PROD-IN
+  sequence_numbers:
+  - sequence: 10
+    type: permit
+    match:
+    - ip address prefix-list PL-WAN-PROD-IN
 router_bfd:
   multihop:
     interval: 300
@@ -200,9 +270,19 @@ router_bgp:
         route_targets:
         - 1000:1000
     router_id: 10.2.0.12
+    neighbors:
+    - ip_address: 10.20.40.3
+      remote_as: '65201'
+      description: k8s dc2-k8s-wk3
+      route_map_in: RM-K8S-IN
+      route_map_out: RM-K8S-OUT
     redistribute:
       connected:
         enabled: true
+    address_family_ipv4:
+      neighbors:
+      - ip_address: 10.20.40.3
+        activate: true
 router_ospf:
   process_ids:
   - id: 100

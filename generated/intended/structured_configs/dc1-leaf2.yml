@@ -1,5 +1,13 @@
 aaa_root:
   disabled: true
+as_path:
+  access_lists:
+  - name: AS-DC1-LOCAL
+    entries:
+    - type: permit
+      match: ^$
+    - type: permit
+      match: ^65101$
 config_end: true
 enable_password:
   disabled: true
@@ -108,6 +116,35 @@ metadata:
   fabric_name: FABRIC
   validate_hardware:
     enabled: false
+prefix_lists:
+- name: PL-K8S-IN
+  sequence_numbers:
+  - sequence: 10
+    action: permit 10.11.0.0/16 ge 24 le 24
+  - sequence: 20
+    action: permit 10.99.0.0/24 ge 32
+  - sequence: 30
+    action: permit 192.0.2.0/24 ge 32
+- name: PL-WAN-PROD-OUT
+  sequence_numbers:
+  - sequence: 10
+    action: deny 10.10.30.0/24 le 32
+  - sequence: 20
+    action: permit 10.10.0.0/16 le 32
+  - sequence: 30
+    action: permit 10.11.0.0/16 le 32
+  - sequence: 40
+    action: permit 192.0.2.0/24 ge 32
+- name: PL-WAN-PROD-IN
+  sequence_numbers:
+  - sequence: 10
+    action: permit 10.30.0.0/16 le 32
+  - sequence: 20
+    action: permit 10.31.0.0/16 le 32
+  - sequence: 30
+    action: permit 198.51.100.0/24 le 32
+  - sequence: 40
+    action: permit 203.0.113.0/24 le 32
 route_maps:
 - name: RM-EVPN-SOO-IN
   sequence_numbers:
@@ -123,6 +160,29 @@ route_maps:
     type: permit
     set:
     - extcommunity soo 10.1.1.12:1 additive
+- name: RM-K8S-IN
+  sequence_numbers:
+  - sequence: 10
+    type: permit
+    match:
+    - ip address prefix-list PL-K8S-IN
+- name: RM-K8S-OUT
+  sequence_numbers:
+  - sequence: 10
+    type: deny
+- name: RM-WAN-PROD-OUT
+  sequence_numbers:
+  - sequence: 10
+    type: permit
+    match:
+    - ip address prefix-list PL-WAN-PROD-OUT
+    - as-path AS-DC1-LOCAL
+- name: RM-WAN-PROD-IN
+  sequence_numbers:
+  - sequence: 10
+    type: permit
+    match:
+    - ip address prefix-list PL-WAN-PROD-IN
 router_bfd:
   multihop:
     interval: 300

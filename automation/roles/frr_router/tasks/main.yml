@@ -1,6 +1,11 @@
 # Declarative push to FRR: stage containerlab/configs/<router>.conf (rendered by make build), `frr-reload.py --test` for the diff,
 # `--reload` to converge (adds AND removes lines).
 
+- name: Kernel devices the config refers to (VRF, 802.1Q sub-interfaces; generated, idempotent)
+  ansible.builtin.command: sh /etc/frr/netdev.sh
+  check_mode: false
+  changed_when: false
+
 - name: Stage intended config in the router
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../containerlab/configs/{{ inventory_hostname }}.conf"

@@ -52,6 +52,17 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githu
 sudo apt-get update -y
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y terraform gh
 
+step "2b. kubectl (user-local, matches the lab's k3s version)"
+KUBECTL_VER=v1.36.5
+mkdir -p "$HOME/.local/bin"
+if ! "$HOME/.local/bin/kubectl" version --client 2>/dev/null | grep -q "$KUBECTL_VER"; then
+  tmp=$(mktemp -d)
+  curl -fsSLo "$tmp/kubectl" "https://dl.k8s.io/release/$KUBECTL_VER/bin/linux/amd64/kubectl"
+  echo "$(curl -fsSL "https://dl.k8s.io/release/$KUBECTL_VER/bin/linux/amd64/kubectl.sha256")  $tmp/kubectl" | sha256sum -c -
+  install -m755 "$tmp/kubectl" "$HOME/.local/bin/kubectl"
+  rm -rf "$tmp"
+fi
+
 step "3. AWS CLI v2"
 if ! command -v aws >/dev/null; then
   tmp=$(mktemp -d)
@@ -93,7 +104,7 @@ step "7. Shell env"
 grep -q 'netops-lab env' ~/.bashrc || cat >> ~/.bashrc <<RC
 
 # >>> netops-lab env
-export PATH="$VENV/bin:\$PATH"
+export PATH="$VENV/bin:\$HOME/.local/bin:\$PATH"
 export CLAB_LABDIR_BASE="$LABDIR_BASE"   # keep clab-* runtime dirs off the SMB share
 export HACK="$HACK"
 # <<< netops-lab env
@@ -106,7 +117,9 @@ images=(
   "otel/opentelemetry-collector-contrib:$OTELCOL_VER"
   "netsampler/goflow2:$GOFLOW2_VER"
   "ghcr.io/srl-labs/network-multitool:latest"
-  "grafana/k6:latest"
+  "grafana/k6:2.3.0"
+  "nicolaka/netshoot:v0.15"
+  "rancher/k3s:v1.36.5-k3s1"
   "batfish/allinone:latest"
 )
 for i in "${images[@]}"; do docker pull -q "$i"; done

@@ -67,6 +67,44 @@ ping_check dc1-web1     10.20.30.11 "inter-DC L3 via EVPN gateways"
 ping_check dc2-db2      10.10.20.14 "inter-DC L3 DC2 -> DC1"
 ping_check dc1-stretch1 10.15.0.12  "inter-DC L2 stretch VLAN150"
 
+echo "== VRF PROD: Kubernetes nodes on the leaves, WAN handoff on the border gateways =="
+for n in $(yq -r '.topology.nodes | to_entries[] | select(.value.kind=="arista_ceos") | .key' "$TOPO"); do
+  want=$(yq '[.router_bgp.vrfs[]? | select(.name=="PROD") | .neighbors[]?] | length' "$SC/$n.yml")
+  [[ $want -gt 0 ]] || continue
+  up=$(eapi "$n" "show ip bgp summary vrf PROD" | jq '[.[0].vrfs.PROD.peers // {} | .[] | select(.peerState=="Established")] | length')
+  [[ ${up:-0} -eq $want ]] && ok "$n $up/$want VRF PROD sessions" || bad "$n ${up:-0}/$want VRF PROD sessions"
+done
+for n in $(yq -r '.topology.nodes | to_entries[] | select(.value.labels.role=="wan") | .key' "$TOPO"); do
+  read -r up total < <(docker exec "clab-netops-$n" vtysh -c 'show bgp vrf PROD ipv4 unicast summary json' 2>/dev/null \
+    | jq -r '[(.ipv4Unicast // .).peers[] | .state] | "\(map(select(.=="Established")) | length) \(length)"')
+  [[ ${total:-0} -gt 0 && $up -eq $total ]] && ok "$n VRF PROD $up/$total established" || bad "$n VRF PROD ${up:-0}/${total:-0} established"
+done
+
+echo "== Kubernetes =="
+K8S=generated/kubernetes.yml
+kc() { KUBECONFIG=${NETOPS_KUBECONFIG:-$HOME/.kube/netops.yaml} "$HOME/.local/bin/kubectl" --request-timeout=10s "$@"; }
+want=$(yq '.nodes | length' "$K8S")
+ready=$(kc get nodes --no-headers 2>/dev/null | awk '$2=="Ready"' | wc -l)
+[[ $ready -eq $want ]] && ok "$ready/$want nodes Ready" || bad "$ready/$want nodes Ready"
+for n in $(yq -r '.nodes | keys | .[]' "$K8S"); do   # node's pod /24 is in its leaf's (or WAN router's) table
+  cidr=$(yq -r ".nodes.\"$n\".pod_cidr" "$K8S"); peer=$(yq -r ".nodes.\"$n\".peer" "$K8S")
+  if [[ $(yq -r ".topology.nodes.\"$peer\".kind" "$TOPO") == arista_ceos ]]; then
+    got=$(eapi "$peer" "show ip route vrf PROD $cidr" | jq -r ".[0].vrfs.PROD.routes.\"$cidr\".routeType // empty")
+  else
+    got=$(docker exec "clab-netops-$peer" vtysh -c "show ip route vrf PROD $cidr json" 2>/dev/null | jq -r ".\"$cidr\"[0].protocol // empty")
+  fi
+  [[ -n $got ]] && ok "$n pod CIDR $cidr announced to $peer" || bad "$n pod CIDR $cidr not in $peer VRF PROD"
+done
+web=$(kc -n prod get deploy web -o jsonpath='{.status.readyReplicas}/{.spec.replicas}' 2>/dev/null)
+[[ -n $web && ${web%/*} == "${web#*/}" ]] && ok "web $web replicas ready" || bad "web ${web:-?} replicas ready"
+http_check() { docker exec "clab-netops-$1" sh -c "wget -q -T 3 -O /dev/null $2 || curl -sf -m 3 -o /dev/null $2" 2>/dev/null \
+  && ok "$1 -> $2 ($3)" || bad "$1 -> $2 ($3)"; }
+http_check inet-k6  http://192.0.2.10/health "Internet user -> public VIP via the WAN"
+http_check dc1-web1 http://10.99.0.10/health "DC1 host -> internal VIP"
+http_check dc2-db1  http://10.99.0.10/health "DC2 host -> internal VIP"
+docker exec clab-netops-attacker1 curl -sf -m 3 -o /dev/null http://10.99.0.10/health 2>/dev/null \
+  && bad "attacker1 reaches the internal VIP (must not)" || ok "attacker1 cannot reach the internal VIP"
+
 echo "== Telemetry =="
 series=$(curl -s localhost:9464/metrics | grep -c '^gnmi_')
 devices=$(curl -s localhost:9464/metrics | grep '^gnmi_' | grep -o 'source="[^"]*"' | sort -u | wc -l)

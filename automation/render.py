@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Lab compiler around AVD.  Two phases, both deterministic and committed:
 
-  render.py pre    network/hosts.yml  -> generated/connected_endpoints.yml   (AVD input)
+  render.py pre    network/hosts.yml       -> generated/connected_endpoints.yml   (AVD input)
+                   network/kubernetes.yml  -> generated/network_services.yml     (AVD input: tenants + k8s node links +
+                   network/wan.yml            BGP peers on leaves, VRF-lite sub-interfaces to the WAN on BGWs)
   [AVD build]      network/ -> generated/intended/{structured_configs,configs}, generated/documentation
-  render.py post   AVD output + network/{wan,hosts}.yml -> containerlab/ (portable, self-contained bundle):
+  render.py post   AVD output + network/{wan,hosts,kubernetes}.yml -> containerlab/ (portable bundle):
                      netops.clab.yml            nodes, cabling, host addressing, TopoViewer layout
                      configs/<switch>.cfg       full EOS startup config (= AVD intended config)
                      configs/<router>.conf      full FRR config
+                     configs/<router>.netdev.sh kernel devices FRR needs (VRF, 802.1Q sub-interfaces)
                      telemetry/gnmic/*.yml      gNMI targets + used-port filter
                    and generated/lab-inventory.yml (FRR WAN + hosts, for make apply)
+
+Everything inside Kubernetes (CNI, BGP, load balancers, apps) is Terraform: terraform/kubernetes/.
 """
 import ipaddress
 import pathlib
@@ -57,16 +62,20 @@ def clab_port(itf: str) -> str:
 
 # `group` drives containerlab's built-in graph view (level + icon, NeXt UI sort order:
 # superspine, dc-gw, spine, leaf, server, ...).
-CLAB_GROUP = {"wan": "superspine", "bgw": "dc-gw", "spine": "spine", "leaf": "leaf", "host": "server", "telemetry": "1"}
+CLAB_GROUP = {"wan": "superspine", "bgw": "dc-gw", "spine": "spine", "leaf": "leaf", "host": "server",
+              "k8s": "server", "traffic": "server", "attacker": "server", "telemetry": "1"}
 
-# VS Code containerlab TopoViewer: graph-icon + graph-posX/Y labels.  Rows top to bottom, DC1 left, DC2 right.
-ICON = {"wan": "pe", "bgw": "dcgw", "spine": "spine", "leaf": "leaf", "host": "server", "telemetry": "controller"}
-ROW_Y = {"wan": 0, "bgw": 160, "spine": 320, "leaf": 480, "host": 640, "telemetry": 820}
+# VS Code containerlab TopoViewer: graph-icon + graph-posX/Y labels.  Rows top to bottom, DC1 left, DC2 right;
+# WAN-site nodes (k8s tie-breaker, Internet users, attackers) sit above their WAN router.
+ICON = {"wan": "pe", "bgw": "dcgw", "spine": "spine", "leaf": "leaf", "host": "server", "k8s": "server",
+        "traffic": "client", "attacker": "client", "telemetry": "controller"}
+ROW_Y = {"edge": -170, "wan": 0, "bgw": 160, "spine": 320, "leaf": 480, "host": 640, "telemetry": 820}
 COL_W, DC_GAP = 170, 260
 
 
-def layout(nodes: dict, servers: dict) -> None:
-    """Place every node: each DC is a block of columns (one per leaf); hosts sit under their leaf."""
+def layout(nodes: dict, attached: dict) -> None:
+    """Place every node: each DC is a block of columns (one per leaf); hosts and k8s nodes sit under their
+    leaf, WAN-site nodes above their WAN router.  attached = {node: switch or router it hangs off}."""
     x0, dc_center = 0, {}
     for site in sorted({n["labels"]["site"] for n in nodes.values() if n["labels"]["role"] == "leaf"}):
         def members(role):
@@ -82,16 +91,17 @@ def layout(nodes: dict, servers: dict) -> None:
                 nodes[name]["pos"] = (x0 + x, ROW_Y[role])
         dc_center[site] = x0 + width / 2
         x0 += width + DC_GAP
-    for leaf in {s["switch"] for s in servers.values()}:
-        on_leaf = sorted(n for n, s in servers.items() if s["switch"] == leaf)
-        lx = nodes[leaf]["pos"][0]
-        for i, name in enumerate(on_leaf):
-            nodes[name]["pos"] = (lx + (i - (len(on_leaf) - 1) / 2) * 90, ROW_Y["host"])
     mid = sum(dc_center.values()) / len(dc_center)
     for role, names in (("wan", sorted(k for k, n in nodes.items() if n["labels"]["role"] == "wan")),
                         ("telemetry", ["gnmic", "otelcol"])):
         for i, name in enumerate(names):
             nodes[name]["pos"] = (mid + (i - (len(names) - 1) / 2) * COL_W * 1.5, ROW_Y[role])
+    for parent in sorted(set(attached.values())):
+        children = sorted(n for n, p in attached.items() if p == parent)
+        px, py = nodes[parent]["pos"]
+        y = ROW_Y["edge"] if py == ROW_Y["wan"] else ROW_Y["host"]
+        for i, name in enumerate(children):
+            nodes[name]["pos"] = (px + (i - (len(children) - 1) / 2) * 90, y)
     for n in nodes.values():
         x, y = n.pop("pos")
         n["labels"].update({"graph-icon": ICON[n["labels"]["role"]], "graph-posX": str(int(x)), "graph-posY": str(int(y))})
@@ -120,9 +130,65 @@ def pre() -> None:
                       "vlans": str(h["vlan"]), "mode": "access", "spanning_tree_portfast": "edge"}],
     } for name, h in hosts.items()]
     dump(BUILD / "connected_endpoints.yml", {"servers": servers})
+    attachments = vrf_attachments()
+    dump(BUILD / "network_services.yml", attachments)
     if not (BUILD / "lab-inventory.yml").exists():          # first build: keep ansible's inventory parse quiet
         dump(BUILD / "lab-inventory.yml", {"all": {"children": {"WAN": {}, "SERVERS": {}}}})
-    print(f"pre: {len(servers)} connected endpoints")
+    vrf = next(v for t in attachments["tenants"] for v in t["vrfs"] if v.get("bgp_peers"))
+    print(f"pre: {len(servers)} connected endpoints, {len(vrf['l3_interfaces'])} VRF {vrf['name']} "
+          f"interfaces, {len(vrf['bgp_peers'])} VRF BGP peers")
+
+
+def prod_vrf_ip(underlay: ipaddress.IPv4Interface, underlay_pool: str, prod_pool: str) -> ipaddress.IPv4Interface:
+    """BGW <-> WAN link address in VRF PROD: same offset in the VRF pool (10.255.0.4/31 -> 10.255.10.4/31)."""
+    offset = int(underlay.ip) - int(ipaddress.ip_network(underlay_pool).network_address)
+    return ipaddress.ip_interface(f"{ipaddress.ip_network(prod_pool).network_address + offset}/{underlay.network.prefixlen}")
+
+
+def wan_handoff_links() -> list[dict]:
+    """The l3_edge BGW <-> WAN links (FABRIC/cabling.yml), each with its VRF PROD sub-interface addresses."""
+    wan, cabling = load(INTENT / "wan.yml"), load(INTENT / "group_vars" / "FABRIC" / "cabling.yml")["l3_edge"]
+    prod = wan["prod_vrf"]
+    pools = {p["name"]: p["ipv4_pool"] for p in cabling["p2p_links_ip_pools"]}
+    profiles = {p["name"]: p for p in cabling["p2p_links_profiles"]}
+    links = []
+    for link in cabling["p2p_links"]:
+        (switch, router), (switch_port, router_port) = link["nodes"], link["interfaces"]
+        if router not in wan["routers"]:
+            continue
+        pool = pools[profiles[link["profile"]]["ip_pool"]]
+        sw_ip, rt_ip = (prod_vrf_ip(ipaddress.ip_interface(ip), pool, prod["bgw_links"]) for ip in link["ip"])
+        links.append({"switch": switch, "switch_port": f"{switch_port}.{prod['dot1q']}", "switch_ip": sw_ip,
+                      "router": router, "router_port": f"{router_port}.{prod['dot1q']}", "router_ip": rt_ip})
+    return links
+
+
+def vrf_attachments() -> dict:
+    """`tenants` from FABRIC/vlans-vrfs.yml plus the VRF PROD attachments owned by other source files:
+      - leaf port + /31 + eBGP peer for every Kubernetes node on a leaf      (kubernetes.yml)
+      - 802.1Q sub-interface + eBGP peer per BGW <-> WAN link, VRF-lite     (wan.yml prod_vrf + cabling.yml)
+    The build loads it as play vars, so it takes precedence over the group_vars copy of `tenants`."""
+    k8s, wan = load(INTENT / "kubernetes.yml"), load(INTENT / "wan.yml")
+    tenants = load(INTENT / "group_vars" / "FABRIC" / "vlans-vrfs.yml")["tenants"]
+    vrf = next(v for t in tenants for v in t["vrfs"] if v["name"] == k8s["cluster"]["vrf"])
+    l3, peers = vrf.setdefault("l3_interfaces", []), vrf.setdefault("bgp_peers", [])
+    for name, n in k8s["nodes"].items():
+        if n["switch"] in wan["routers"]:               # WAN-attached node: the FRR side is rendered in post
+            continue
+        net = ipaddress.ip_network(n["link"])
+        l3.append({"interfaces": [n["port"]], "nodes": [n["switch"]], "ip_addresses": [f"{net[0]}/{net.prefixlen}"],
+                   "description": f"k8s {name}", "mtu": 1500, "enabled": True})
+        peers.append({"ip_address": str(net[1]), "remote_as": str(n["asn"]), "nodes": [n["switch"]],
+                      "description": f"k8s {name}", "route_map_in": "RM-K8S-IN", "route_map_out": "RM-K8S-OUT"})
+    asn = {r: str(w["asn"]) for r, w in wan["routers"].items()}
+    for l in wan_handoff_links():
+        l3.append({"interfaces": [l["switch_port"]], "nodes": [l["switch"]], "ip_addresses": [str(l["switch_ip"])],
+                   "encapsulation_dot1q_vlan": [wan["prod_vrf"]["dot1q"]],
+                   "description": f"{l['router']} {l['router_port']} VRF {vrf['name']}", "enabled": True})
+        peers.append({"ip_address": str(l["router_ip"].ip), "remote_as": asn[l["router"]], "nodes": [l["switch"]],
+                      "description": f"{l['router']} VRF {vrf['name']}", "send_community": "all",
+                      "route_map_in": "RM-WAN-PROD-IN", "route_map_out": "RM-WAN-PROD-OUT"})
+    return {"tenants": tenants}
 
 
 # --------------------------------------------------------------------------- post
@@ -165,16 +231,59 @@ def post() -> None:
     for w in wan_nodes.values():
         w["p2p"].sort(key=lambda p: (len(p["name"]), p["name"]))
 
+    # ---- VRF PROD on the WAN routers: sub-interfaces to the BGWs and between the routers, WAN-site ports
+    prod, k8s = wan["prod_vrf"], load(INTENT / "kubernetes.yml")
+    for w in wan_nodes.values():
+        w["vrf"] = {"name": prod["name"], "table": prod["table"], "subifs": [], "interfaces": [], "peers": []}
+
+    def vrf_port(router, port, ip, peer, peer_ip=None, peer_asn=None):
+        v = wan_nodes[router]["vrf"]
+        if "." in port:
+            parent, vlan = port.split(".")
+            v["subifs"].append({"name": port, "parent": parent, "vlan": int(vlan)})
+        v["interfaces"].append({"name": port, "ip": str(ip), "peer": peer})
+        if peer_ip:
+            v["peers"].append({"ip": str(peer_ip), "asn": peer_asn, "name": peer})
+
+    for l in wan_handoff_links():
+        vrf_port(l["router"], l["router_port"], l["router_ip"], l["switch"], l["switch_ip"].ip,
+                 int(sc[l["switch"]]["router_bgp"]["as"]))
+    for l in wan.get("links", []):
+        if "prod_subnet" not in l:
+            continue
+        (an, ap), (bn, bp) = l["a"].split(":"), l["b"].split(":")
+        net = ipaddress.ip_network(l["prod_subnet"])
+        vrf_port(an, f"{ap}.{prod['dot1q']}", f"{net[0]}/{net.prefixlen}", bn, net[1], wan["routers"][bn]["asn"])
+        vrf_port(bn, f"{bp}.{prod['dot1q']}", f"{net[1]}/{net.prefixlen}", an, net[0], wan["routers"][an]["asn"])
+    attached = {}                                       # node -> switch/router it hangs off (layout)
+    for name, n in k8s["nodes"].items():
+        sw_port = n["port"] if n["switch"] in wan_nodes else clab_port(n["port"])
+        links.add(tuple(sorted([(name, "eth1"), (n["switch"], sw_port)])))
+        attached[name] = n["switch"]
+        if n["switch"] in wan_nodes:
+            net = ipaddress.ip_network(n["link"])
+            vrf_port(n["switch"], n["port"], f"{net[0]}/{net.prefixlen}", name, net[1], n["asn"])
+    for name, h in wan.get("edge_hosts", {}).items():
+        net = ipaddress.ip_interface(h["ip"]).network
+        vrf_port(h["router"], h["port"], f"{net[1]}/{net.prefixlen}", name)
+        links.add(tuple(sorted([(name, "eth1"), (h["router"], h["port"])])))
+        attached[name] = h["router"]
+    for w in wan_nodes.values():
+        for key in ("subifs", "interfaces"):
+            w["vrf"][key].sort(key=lambda p: (len(p["name"]), p["name"]))
+
     servers = {}
     for name, h in hosts.items():
         svi = next(v for v in sc[h["switch"]].get("vlan_interfaces", []) if v["name"] == f"Vlan{h['vlan']}")
         servers[name] = {"ip": h["ip"], "gw": str(ipaddress.ip_interface(svi["ip_address_virtual"]).ip),
                          "switch": h["switch"], "switch_port": h["port"], "vlan": h["vlan"]}
+        attached[name] = h["switch"]
 
     # ---- containerlab bundle: full startup configs, so `containerlab deploy` alone brings the network up
     (CLAB / "configs").mkdir(parents=True, exist_ok=True)
-    frr_tpl = jinja2.Environment(loader=jinja2.FileSystemLoader(AUTOMATION / "templates"), trim_blocks=True,
-                                 keep_trailing_newline=True).get_template("frr.conf.j2")
+    jenv = jinja2.Environment(loader=jinja2.FileSystemLoader(AUTOMATION / "templates"), trim_blocks=True,
+                              keep_trailing_newline=True)
+    frr_tpl, netdev_tpl = jenv.get_template("frr.conf.j2"), jenv.get_template("netdev.sh.j2")
     nodes = {}
     for dev, cfg in sc.items():
         mgmt = ipaddress.ip_interface(cfg["management_interfaces"][0]["ip_address"])
@@ -186,36 +295,92 @@ def post() -> None:
         (CLAB / "configs" / f"{dev}.cfg").write_text((BUILD / "intended" / "configs" / f"{dev}.cfg").read_text())
     for name, w in wan["routers"].items():
         (CLAB / "configs" / f"{name}.conf").write_text(frr_tpl.render(node=wan_nodes[name]))
+        (CLAB / "configs" / f"{name}.netdev.sh").write_text(netdev_tpl.render(node=wan_nodes[name]))
         nodes[name] = {"kind": "linux", "image": wan["image"], "mgmt-ipv4": w["mgmt_ip"],
                        "labels": {"site": "wan", "role": "wan"},
                        "binds": [f"configs/{name}.conf:/etc/frr/frr.conf",
+                                 f"configs/{name}.netdev.sh:/etc/frr/netdev.sh:ro",
+                                 "static/frr/start.sh:/etc/frr/start.sh:ro",
                                  "static/frr/daemons:/etc/frr/daemons:ro",
-                                 "static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro"]}
+                                 "static/frr/vtysh.conf:/etc/frr/vtysh.conf:ro"],
+                       # kernel VRF + sub-interfaces first (netdev.sh), then the image's normal FRR start
+                       "entrypoint": "/sbin/tini",
+                       "cmd": "-- /bin/sh /etc/frr/start.sh /usr/lib/frr/docker-start"}
     for name, s in servers.items():
         nodes[name] = {"kind": "linux", "image": HOST_IMAGE, "labels": {"site": name.split("-")[0], "role": "host"},
                        "exec": ["ip link set eth1 up", f"ip address add {s['ip']} dev eth1",
                                 f"ip route replace 10.0.0.0/8 via {s['gw']} dev eth1"]}
+
+    # k3s nodes: node-net.sh addresses eth1 (the fabric /31) and routes the lab over it, then execs k3s,
+    # so the node IP exists before k3s binds to it.  CNI, BGP, load balancers and apps: terraform/kubernetes/.
+    cl = k8s["cluster"]
+    first = next(n for n, v in k8s["nodes"].items() if v["role"] == "server")
+    join = f"--server=https://{ipaddress.ip_network(k8s['nodes'][first]['link'])[1]}:6443"
+    for name, n in k8s["nodes"].items():
+        net = ipaddress.ip_network(n["link"])
+        args = [n["role"], f"--node-name={name}", f"--node-ip={net[1]}",
+                f"--node-label=topology.kubernetes.io/zone={n['zone']}"]
+        if n["role"] == "server":
+            args += ["--cluster-init" if name == first else join,
+                     f"--advertise-address={net[1]}", f"--tls-san={net[1]}", f"--tls-san={n['mgmt_ip']}",
+                     "--flannel-backend=none", "--disable-network-policy", "--disable=traefik", "--disable=servicelb",
+                     f"--cluster-cidr={cl['cluster_cidr']}", f"--service-cidr={cl['service_cidr']}",
+                     f"--cluster-dns={cl['cluster_dns']}", "--write-kubeconfig-mode=644",
+                     "--kube-controller-manager-arg=allocate-node-cidrs=false"]   # pod CIDRs: terraform, per node
+        else:
+            args.append(join)
+        if n.get("workloads") is False:
+            args.append("--node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule")
+        nodes[name] = {"kind": "linux", "image": cl["k3s_image"], "mgmt-ipv4": n["mgmt_ip"],
+                       "labels": {"site": n["zone"], "role": "k8s"},
+                       "env": {"K3S_TOKEN": "${K3S_TOKEN:=netops-lab}", "NODE_LINK": f"{net[1]}/{net.prefixlen}",
+                               "NODE_GW": str(net[0]), "FABRIC_ROUTES": " ".join(cl["routes_via_fabric"])},
+                       # /var/lib/rancher/k3s (containerd, etcd) is a VOLUME in the k3s image: host disk, not
+                       # overlay-on-overlay; containerlab removes it with the node.
+                       "binds": ["static/k8s/node-net.sh:/etc/netops/node-net.sh:ro"],
+                       "entrypoint": "/bin/sh",
+                       "cmd": " ".join(["/etc/netops/node-net.sh", *args])}
+
+    # WAN-site hosts (traffic generators): only reach the lab, never the Internet
+    for name, h in wan.get("edge_hosts", {}).items():
+        own = ipaddress.ip_interface(h["ip"]).network
+        setup = ["ip link set eth1 up", f"ip address add {h['ip']} dev eth1", "ip route del default",
+                 *(f"ip route replace {p} via {own[1]} dev eth1" for p in cl["routes_via_fabric"]
+                   if not ipaddress.ip_network(p).overlaps(own))]
+        if h.get("rate_limit"):
+            setup.append(f"tc qdisc replace dev eth1 root tbf rate {h['rate_limit']} burst 64kb latency 50ms")
+        nodes[name] = {"kind": "linux", "image": h["image"], "user": "root",
+                       "labels": {"site": "wan", "role": h["role"]},
+                       "binds": ["static/generators:/generators:ro"],
+                       "env": h.get("env", {}),
+                       "entrypoint": "/bin/sh", "cmd": f"/generators/{h['run']}", "exec": setup}
+        if not nodes[name]["env"]:
+            del nodes[name]["env"]
     nodes["otelcol"] = {
-        "kind": "linux", "image": "otel/opentelemetry-collector-contrib:0.162.0", "mgmt-ipv4": "172.20.20.250",
+        "kind": "linux", "restart-policy": "always", "image": "otel/opentelemetry-collector-contrib:0.162.0", "mgmt-ipv4": "172.20.20.250",
         "labels": {"role": "telemetry"}, "binds": ["telemetry/otelcol:/etc/otelcol:ro"],
         # OTELCOL_PROFILE=elastic (+ ELASTIC_OTLP_ENDPOINT, ELASTIC_API_KEY) at deploy time adds the Elastic export
         "env": {"ELASTIC_OTLP_ENDPOINT": "${ELASTIC_OTLP_ENDPOINT:=not-set}", "ELASTIC_API_KEY": "${ELASTIC_API_KEY:=not-set}"},
         "cmd": "--config /etc/otelcol/base.yml --config /etc/otelcol/${OTELCOL_PROFILE:=local}.yml",
         "ports": ["9464:9464"]}
     nodes["gnmic"] = {
-        "kind": "linux", "image": "ghcr.io/openconfig/gnmic:0.49.0", "mgmt-ipv4": "172.20.20.251",
+        "kind": "linux", "restart-policy": "always", "image": "ghcr.io/openconfig/gnmic:0.49.0", "mgmt-ipv4": "172.20.20.251",
         "labels": {"role": "telemetry"}, "binds": ["telemetry/gnmic:/etc/gnmic:ro"],
         "env": {"GNMIC_USERNAME": "${EOS_USER:=admin}", "GNMIC_PASSWORD": "${EOS_PASSWORD:=admin}"},
         "cmd": "--config /etc/gnmic/gnmic.yml subscribe"}
     for n in nodes.values():
         n["group"] = CLAB_GROUP[n["labels"]["role"]]
-    layout(nodes, servers)
+    layout(nodes, attached)
     topo = {"name": LAB,
             "mgmt": {"network": "clab-mgmt", "ipv4-subnet": "172.20.20.0/24"},
-            "topology": {"kinds": {"arista_ceos": {
-                             "image": CEOS_IMAGE, "enforce-startup-config": True,
-                             # eth0 -> Management1, ethN -> EthernetN: same names as hardware / AVD cEOSLab profile
-                             "binds": ["static/ceos/interface_mapping.json:/mnt/flash/EosIntfMapping.json:ro"]}},
+            "topology": {"kinds": {
+                             "arista_ceos": {
+                                 "image": CEOS_IMAGE, "enforce-startup-config": True,
+                                 # eth0 -> Management1, ethN -> EthernetN: same names as hardware / AVD cEOSLab profile
+                                 "binds": ["static/ceos/interface_mapping.json:/mnt/flash/EosIntfMapping.json:ro"]},
+                             # a Docker restart gives a container a fresh network namespace: its containerlab
+                             # links are gone.  Only management-only nodes (telemetry) may restart.
+                             "linux": {"restart-policy": "no"}},
                          "nodes": nodes,
                          "links": [{"endpoints": [f"{a}:{ap}", f"{b}:{bp}"]} for (a, ap), (b, bp) in sorted(links)]}}
     dump(CLAB / "netops.clab.yml", topo, HEADER.replace("— do not edit", "— do not edit (deploy: containerlab deploy -t netops.clab.yml)"))
@@ -237,6 +402,14 @@ def post() -> None:
     gn["outputs"]["otel"]["event-processors"] = ["used-ports", *gn["outputs"]["otel"].get("event-processors", [])]
     dump(CLAB / "telemetry" / "gnmic" / "gnmic.yml", gn)
 
+    # ---- Kubernetes intent with the fabric side resolved, for terraform/kubernetes/
+    as_of = {**{d: int(c["router_bgp"]["as"]) for d, c in sc.items()}, **{r: w["asn"] for r, w in wan["routers"].items()}}
+    dump(BUILD / "kubernetes.yml", {"cluster": cl, "nodes": {name: {
+        "role": n["role"], "zone": n["zone"], "workloads": n.get("workloads", True),
+        "container": f"clab-{LAB}-{name}", "ip": str(ipaddress.ip_network(n["link"])[1]), "asn": n["asn"],
+        "pod_cidr": n["pod_cidr"], "peer": n["switch"], "peer_ip": str(ipaddress.ip_network(n["link"])[0]),
+        "peer_asn": as_of[n["switch"]]} for name, n in k8s["nodes"].items()}})
+
     # ---- Ansible inventory for the non-Arista parts
     inv = {"all": {"children": {
         "WAN": {"vars": {"ansible_connection": "community.docker.docker", "ansible_python_interpreter": "/usr/bin/python3"},
@@ -245,7 +418,8 @@ def post() -> None:
                     "hosts": {n: {"ansible_host": f"clab-{LAB}-{n}", "server": s} for n, s in servers.items()}},
     }}}
     dump(BUILD / "lab-inventory.yml", inv)
-    print(f"post: {len(sc)} cEOS, {len(wan_nodes)} WAN, {len(servers)} hosts, {len(links)} links")
+    print(f"post: {len(sc)} cEOS, {len(wan_nodes)} WAN, {len(servers)} hosts, {len(k8s['nodes'])} k8s nodes, "
+          f"{len(wan.get('edge_hosts', {}))} edge hosts, {len(links)} links")
 
 
 if __name__ == "__main__":

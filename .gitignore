@@ -4,5 +4,10 @@ containerlab/*.annotations.json
 generated/config_backup/
 clab-*/
 __pycache__/
+._*
 *.retry
 *.bak
+# terraform: provider cache lives in ~/.cache, state in the lab dir; never commit either
+.terraform/
+*.tfstate
+*.tfstate.*
