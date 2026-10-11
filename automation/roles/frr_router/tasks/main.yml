@@ -1,8 +1,18 @@
 # Declarative push to FRR: stage containerlab/configs/<router>.conf (rendered by make build), `frr-reload.py --test` for the diff,
 # `--reload` to converge (adds AND removes lines).
 
+# Run this checkout's netdev.sh, not the bind-mounted /etc/frr/netdev.sh: that one is whatever the lab was
+# deployed from, and it goes stale (ESTALE) when the file is replaced on the share.
+- name: Stage kernel-device script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../containerlab/configs/{{ inventory_hostname }}.netdev.sh"
+    dest: /tmp/netdev.sh
+    mode: "0755"
+  check_mode: false
+  changed_when: false
+
 - name: Kernel devices the config refers to (VRF, 802.1Q sub-interfaces; generated, idempotent)
-  ansible.builtin.command: sh /etc/frr/netdev.sh
+  ansible.builtin.command: sh /tmp/netdev.sh
   check_mode: false
   changed_when: false
 
