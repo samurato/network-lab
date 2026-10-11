@@ -1,142 +1,96 @@
 # netops-lab
 
-Dual-DC **Arista EVPN-VXLAN multi-site** lab with streaming telemetry, managed by GitOps.
-Built for the Auto-SRE hackathon: an AI agent reads the telemetry in Elastic and fixes the
-network by opening a pull request against this repo.
+A dual-data-centre **Arista EVPN-VXLAN multi-site** network, with a **Kubernetes cluster stretched across
+both DCs**, Internet users and attackers behind a WAN, and streaming telemetry to Elastic. All of it is
+built from this repository by infrastructure-as-code and kept in sync by GitOps.
 
-```
-                 wan1 (FRR, AS64901) ══ wan2 (FRR, AS64902)          DCI: eBGP (loopbacks)
-                  ║ ║            ║ ║
-      ┌───────── dc1-bgw1/2 ─────────┐          ┌───────── dc2-bgw1/2 ─────────┐
-      │  EVPN Gateways (bgw1/bgw2)   │◄═ EVPN ═►│  EVPN Gateways (bgw1/bgw2)   │  re-originate RT2/RT5,
-      │           │                  │  domain  │           │                  │  next-hop-self
-      │   dc1-spine1/2 (EVPN RR)     │  remote  │   dc2-spine1/2 (EVPN RR)     │
-      │   │      │      │      │     │          │      │          │            │
-      │ leaf1  leaf2  leaf3  leaf4   │          │    leaf1      leaf2          │
-      │  web   web+str  app    app   │          │     db       db+stretch      │
-      └──────────────────────────────┘          └──────────────────────────────┘
-        DC1 EVPN domain (VTEPs 10.1.1.x)          DC2 EVPN domain (VTEPs 10.2.1.x)
-        AS 65100: OSPF + iBGP EVPN                AS 65200: OSPF + iBGP EVPN
-```
+It was built for the Auto-SRE hackathon. When something breaks at 3 AM, an AI agent reads the telemetry in
+Elastic and fixes the network by opening a pull request against this repo, for an engineer to review.
 
-On top of it: a **k3s Kubernetes cluster** stretched over both DCs, with the colleague's web app behind
-load-balancer VIPs, and **traffic generators** behind the WAN:
+## The whole system on one page
 
-```
-   inet-k6 (198.51.100.11) ── wan2      wan1 ── attacker1 (203.0.113.66, rate-capped)
-                                          └──── wan-k8s-cp3  control plane, tie-breaker (10.30.40.1)
-   DC1: dc1-k8s-cp1 (leaf1)  dc1-k8s-wk1 (leaf3)  dc1-k8s-wk2 (leaf4)     10.10.40.x, pods 10.11.x.0/24
-   DC2: dc2-k8s-cp2 (leaf1)  dc2-k8s-wk3 (leaf2)                          10.20.40.x, pods 10.21.x.0/24
-   web: 4 pods, 2 per DC.  VIPs 192.0.2.10 (public, also to the WAN) and 10.99.0.10 (internal)
-```
+![netops-lab architecture: Git, infrastructure as code, the lab with WAN, two EVPN data centres and Kubernetes, observability and the agent loop](docs/images/architecture.svg)
 
-| Layer | Protocol | AS |
+How to read it, left to right:
+1. **Git is the source of truth.** `network/` describes the switches and the WAN; `kubernetes/` describes the
+   cluster and what runs in it.
+2. **Infrastructure as code turns it into a running lab.**
+   - AVD and `render.py` generate every config and the topology.
+   - containerlab cables it, and Ansible pushes config changes.
+   - Terraform builds everything inside Kubernetes.
+3. **The lab itself.**
+   - Two EVPN-VXLAN data centres, joined by EVPN gateways over an FRR WAN.
+   - Kubernetes nodes plug into the leaves like servers and announce pod networks and VIPs over BGP.
+   - Internet users and an attacker sit behind the WAN.
+4. **Observability.** Every switch streams gNMI through an OTel Collector to Elastic, where the Auto-SRE
+   agent watches.
+5. **The loop closes with a pull request.** CI plans it, an engineer approves, and the merge deploys it.
+
+Each layer has its own detailed diagrams in [docs/architecture.md](docs/architecture.md).
+
+| Layer | What runs | Built by |
 |---|---|---|
-| Underlay inside each DC | OSPF 100, area 0 (p2p links + loopbacks) | — |
-| Overlay inside each DC | iBGP EVPN, spines are route reflectors | DC1 65100, DC2 65200 |
-| BGW ↔ WAN routers | eBGP IPv4, BGW loopbacks only | WAN 64901 / 64902 |
-| BGW ↔ remote BGW | eBGP EVPN multihop, domain remote, I-ES | 65100 ↔ 65200 |
+| **Network** | 14 Arista cEOS switches (OSPF underlay, iBGP EVPN, EVPN gateways between DCs) + 2 FRR WAN routers | `network/` → AVD + `render.py` → containerlab / `make apply` |
+| **Compute** | 6 k3s nodes, each on a routed /31 to a leaf; 3 control-plane nodes (DC1, DC2, WAN tie-breaker) | `kubernetes/cluster.yml` → `render.py` → containerlab |
+| **Platform and apps** | Cilium (native routing, BGP to the leaves, load-balancer VIPs), the web app 2 + 2 across the DCs, iperf3 servers | `kubernetes/terraform/` → Terraform |
+| **Traffic** | k6 users and a rate-capped attacker behind the WAN, link faults with netem | `network/wan.yml` |
+| **Observability** | gNMI from every switch → OTel Collector → Elastic, plus a change event per deploy | `automation/telemetry/`, `containerlab/telemetry/` |
 
-VRF `PROD` (L3 VNI 1000) spans both DCs through the gateways; VLAN 150 is stretched at L2.
-Leaves only see their own DC's VTEPs. VRF `PROD` is also handed to the WAN routers (VRF-lite, 802.1Q
-sub-interfaces `.100` on the gateway links) so WAN-side sites reach the DCs; route-maps keep DC1 ↔ DC2
-traffic on EVPN.
+The web app answers on **192.0.2.10** (public, from the WAN) and **10.99.0.10** (inside the DCs).
 
-| Kubernetes piece | How |
+## Documentation
+
+| Guide | For |
 |---|---|
-| Nodes | k3s in containerlab, each on its own routed /31 to a leaf (or wan1), node IP pinned to it |
-| Control plane | 3 servers with embedded etcd: one per DC + a tie-breaker on the WAN, so either DC can fail |
-| Pod network | Cilium, native routing: every node announces its pod /24 to its leaf over eBGP (AS 65101 / 65201 / 65301) |
-| Load balancers | Cilium LB IPAM + BGP: a node announces a VIP only while it runs a ready pod (`externalTrafficPolicy: Local`) |
-| Database | not deployed yet; name `db` and VIP 10.20.30.10 (VLAN 130, DC2) are reserved |
+| [Architecture](docs/architecture.md) | the full design, with diagrams of every layer, design decisions and known gaps |
+| [IP plan](docs/ip-plan.md) | every subnet, address, AS number and the VIP registry |
+| [Network engineer's guide](docs/network-engineer-guide.md) | changing the fabric, routing and policy safely |
+| [DevOps guide](docs/devops-guide.md) | running the lab, CI/CD, Elastic export, traffic and faults, troubleshooting |
+| [Kubernetes guide](docs/kubernetes-guide.md) | operating the cluster: nodes, Cilium, BGP, VIP pools, upgrades |
+| [Developer guide](docs/developer-guide.md) | deploying and exposing an app, step by step |
 
-## The repo in one minute
+## The repository
 
 ```
-network/      ← The network design, in YAML: switches, VLANs/VRFs, WAN, servers. You edit this.
-kubernetes/   ← The Kubernetes cluster: nodes and addressing (cluster.yml) and everything inside it
-                (terraform/: Cilium, BGP to the leaves, load-balancer pools, apps). You edit this.
-containerlab/ ← Everything needed to run the lab, generated by `make build`. Copy this one folder
-                to any containerlab host and `containerlab deploy -t netops.clab.yml`.
-generated/    ← AVD output from `make build`: configs, docs. Read it to review a change; never edit it.
-automation/   ← Tooling: the generator, Ansible, lab helper, health checks. Rarely touched.
-Makefile      ← Every command you need (`make help`).
+network/        YOU EDIT: the switches and WAN: inventory, group_vars (routing, VLANs/VRFs, cabling,
+                management, per-DC design + route policy), hosts.yml, wan.yml
+kubernetes/     YOU EDIT: the cluster: cluster.yml (nodes, links, pod CIDRs, VIP pools),
+                node/entrypoint.sh, terraform/ (Cilium, BGP, pools, apps)
+docs/           design and guides
+generated/      build output: EOS configs, fabric docs, Ansible inventory, Terraform input. Never edit.
+containerlab/   build output: the deployable lab bundle (topology, startup configs, telemetry). Never edit
+                except static/ and telemetry/otelcol/.
+automation/     tooling: render.py, Ansible playbooks/roles, lab + k8s helpers, verify.sh, CI scripts
+.github/        workflows (plan, deploy, drift) and CODEOWNERS
+Makefile        every command (make help)
 ```
 
-## Making a change
+## Quick start (on the lab host)
 
-1. **Edit a file in `network/` or `kubernetes/`** (see the table below).
-2. **`make build`**: turns `network/` into full switch configs (`generated/`) and the lab bundle
-   (`containerlab/`). Takes ~30 s,
-   touches no device. Errors here mean the YAML is invalid.
-3. **Review what changed**: `git diff generated/intended/configs/` shows the exact EOS lines.
-4. **`make plan`**: compares those configs with the running switches; nothing is changed.
-5. **`make apply`**: pushes the configs (full config replace), then **`make verify`**.
-6. **Commit** `network/`, `generated/` and `containerlab/` together and push (or open a PR; CI runs steps 2–4
-   and comments the plan).
-
-## Which file do I edit?
-
-| I want to change… | Edit |
-|---|---|
-| Routing design (OSPF underlay, iBGP EVPN overlay) | `network/group_vars/FABRIC/routing.yml` |
-| VRFs, VLANs, subnets | `network/group_vars/FABRIC/vlans-vrfs.yml` |
-| Which leaves carry a VLAN | `filter.tags` of the leaf in `network/group_vars/DC1.yml` / `DC2.yml` |
-| A DC's AS, IP ranges, spines, leaves, border gateways | `network/group_vars/DC1.yml`, `DC2.yml` |
-| Border gateway ↔ WAN links and IPs | `network/group_vars/FABRIC/cabling.yml` |
-| Users, management VRF, eAPI, gNMI | `network/group_vars/FABRIC/management.yml` |
-| Add or remove a switch | `network/inventory.yml` **and** its DC file |
-| Servers and the leaf port they plug into | `network/hosts.yml` |
-| WAN routers, VRF PROD handoff, Internet users / attackers | `network/wan.yml` |
-| Kubernetes nodes, their leaf ports, /31s, pod CIDRs, VIP pools | `kubernetes/cluster.yml` |
-| Routing policy towards k8s nodes and the WAN (route-maps) | `structured_config` in `network/group_vars/DC1.yml`, `DC2.yml` |
-| Apps in the cluster (web, iperf3, reserved db) | `kubernetes/terraform/apps.tf` |
-| Cilium, BGP to the leaves, load-balancer pools | `kubernetes/terraform/cilium.tf`, `bgp.tf` |
-
-## Looking at the result
-
-| What | Where |
-|---|---|
-| Full config of a switch | `generated/intended/configs/<switch>.cfg` |
-| Readable per-switch docs (interfaces, BGP, VXLAN tables) | `generated/documentation/devices/<switch>.md` |
-| Fabric overview (all IPs, links) | `generated/documentation/fabric/FABRIC-documentation.md` |
-| WAN router configs | `containerlab/configs/<router>.conf` |
-| A live switch | `automation/lab cli dc1-leaf1` (EOS CLI; `vtysh` on wan1/wan2) |
-| Diagram | open `containerlab/netops.clab.yml` in VS Code with the Containerlab extension (TopoViewer) |
-| Live topology view | `make graph` → http://192.168.20.56:50080, click *Vertical Layout* |
-
-## Commands
+```bash
+cd ~/hackathon/netops-lab
+make up          # build, deploy network + k3s, Terraform the cluster, verify (~10 min)
+make verify      # 60+ checks: OSPF, BGP/EVPN, isolation, pings, VRF handoff, k8s, VIPs, telemetry
+make down        # destroy
+```
 
 | Command | Does |
 |---|---|
-| `make build` | `network/` → configs and docs in `generated/`, lab bundle in `containerlab/` (offline) |
-| `make plan` | per-switch diff, running vs `generated/` (changes nothing) |
-| `make apply` | push configs to every device (removes anything not in `network/`) |
-| `make verify` | OSPF, BGP/EVPN, VTEP isolation, pings, VRF PROD handoff, k8s nodes / pod routes / VIPs, telemetry |
-| `make up` / `make redeploy` | deploy the lab from `containerlab/` / wipe and redeploy it, Kubernetes, verify |
-| `make k8s-plan` / `make k8s` | Terraform plan / apply for everything inside Kubernetes |
-| `automation/k8s kubectl …` | kubectl against the lab cluster (kubeconfig in `~/.kube/netops.yaml`) |
-| `make down` | destroy the lab |
-| `make status` | list lab nodes |
+| `make build` | `network/` + `kubernetes/` → `generated/` + `containerlab/` (offline, ~30 s) |
+| `make plan` / `make apply` | network: per-device diff / push (EOS config replace, FRR reload) |
+| `make k8s-plan` / `make k8s` | Kubernetes: Terraform plan / apply |
+| `make up` / `make redeploy` / `make down` | deploy / wipe and redeploy / destroy the lab |
+| `make verify` | all health checks |
+| `make graph`, `make status` | live topology view, node list |
+| `automation/lab cli <node>` | EOS CLI on a switch, `vtysh` on a WAN router |
+| `automation/k8s kubectl …` | kubectl against the cluster |
 
-Credentials: `EOS_USER` / `EOS_PASSWORD` env vars (CI secrets); lab default admin/admin.
-Elastic: put `ELASTIC_OTLP_ENDPOINT` / `ELASTIC_API_KEY` in `automation/elastic.env` (git-ignored, see
-`elastic.env.example`); `make up` / `make redeploy` then deploy the collector with Elastic export.
+Credentials: `EOS_USER` / `EOS_PASSWORD` (lab default admin/admin), `K3S_TOKEN` (default `netops-lab`).
+Elastic: `automation/elastic.env` (git-ignored, see `elastic.env.example`).
 
-## GitOps
+## Making a change
 
-| When | What runs |
-|---|---|
-| Pull request | `make build` must match the committed `generated/` and `containerlab/`, then `make plan`, posted as a PR comment |
-| Merge to main | `make apply`, `automation/k8s apply` (Terraform), `automation/verify.sh`, change event to Elastic |
-| Every 15 min | `make plan` against main; opens a `drift` issue if the network differs |
-
-Workflows are in `.github/workflows/` and run on a self-hosted runner labelled `netops-lab`.
-
-## Traffic generators
-
-| Generator | Where | Use |
-|---|---|---|
-| k6 | `inet-k6` behind wan2 | always on: 5 req/s to `http://192.0.2.10` (`TARGET` / `RPS` in `network/wan.yml`) |
-| nping, iperf3, curl | `attacker1` behind wan1, capped at 20 Mbit/s, no Internet | `docker exec clab-netops-attacker1 nping --tcp -p 80 --flags syn --rate 500 -c 5000 192.0.2.10` |
-| iperf3 servers | pods `iperf3-dc1`, `iperf3-dc2` | `automation/k8s kubectl -n prod exec deploy/iperf3-dc1 -- iperf3 -c iperf3-dc2.prod -t 30` (DCI load) |
+1. Edit `network/` (switches) or `kubernetes/` (cluster and apps). The guides list which file holds what.
+2. `make build`, then review `git diff generated/` (exact EOS lines).
+3. `make plan` and/or `make k8s-plan`: see what would change on the running lab.
+4. Open a pull request. CI posts the plan, a network reviewer approves, and the merge deploys and verifies.

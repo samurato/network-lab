@@ -1,6 +1,8 @@
 # kubernetes/ — the k3s cluster across both DCs
 
 Everything about the Kubernetes infrastructure lives here. The switches it plugs into are in `../network/`.
+Full guides: [Kubernetes guide](../docs/kubernetes-guide.md) (platform) and
+[developer guide](../docs/developer-guide.md) (deploying an app).
 
 ```
 cluster.yml       SOURCE OF TRUTH: nodes, the leaf (or WAN router) port each plugs into, its /31,
