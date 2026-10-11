@@ -14,6 +14,10 @@ if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
   xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || :
   sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers > /sys/fs/cgroup/cgroup.subtree_control
 fi
+# Cilium: its pods mount /sys/fs/bpf with bidirectional propagation, which needs / to be rshared and a
+# shared bpffs there (Docker makes both private).  Without it cilium stays in Init:CreateContainerError.
+{ mount --make-rshared / && { mountpoint -q /sys/fs/bpf || mount -t bpf bpffs /sys/fs/bpf; } \
+  && mount --make-shared /sys/fs/bpf; } || echo "entrypoint: shared bpffs setup failed" >&2   # never exit here
 # k3s exits on a failed join (e.g. the first server not up yet).  Retry here: the container must never
 # exit, a restart would drop its containerlab link.
 while true; do
