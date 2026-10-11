@@ -86,6 +86,7 @@ make verify                                       # includes pod-CIDR routes on 
 ```
 
 ### Check BGP from the cluster side
+Full Cilium reference (config, packet paths, BGP, VIPs, Hubble, troubleshooting): [cilium.md](cilium.md).
 ```bash
 # sessions of the node the agent pod runs on (pick a node with -l / --field-selector, or loop)
 automation/k8s kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg shell -- bgp/peers
