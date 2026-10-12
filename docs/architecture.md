@@ -471,7 +471,7 @@ collector back as `local` and change events stay in `~/netops-changes.jsonl`).
 | Gap | Impact | Next step |
 |---|---|---|
 | Elastic repository secrets not set yet | a CI deploy brings the collector back as `local` | lab key + `automation/elastic gh-secrets`: [Elastic guide](elastic.md#3-first-time-setup) |
-| Elastic project has no Managed OTLP endpoint and no Observability apps | collector writes straight to Elasticsearch; no APM UI, SLOs or Synthetics | an Observability project; the collector's `elastic-otlp` profile is ready ([Elastic guide](elastic.md#9-moving-to-a-managed-otlp-endpoint-later)) |
+| Elastic project has no Managed OTLP endpoint and no Observability apps | collector writes straight to Elasticsearch; no APM UI, SLOs or Synthetics | an Observability project; the collector's `elastic-otlp` profile is ready ([Elastic guide](elastic.md#10-moving-to-a-managed-otlp-endpoint-later)) |
 | No routing-table telemetry | OpenConfig AFT and BGP RIB paths return empty (only `provider eos-native` is enabled) | enable `provider aft`: [roadmap](observability-roadmap.md) steps 5–6 |
 | No Kubernetes, Cilium or Hubble telemetry | node, pod and Cilium health not visible | [roadmap](observability-roadmap.md) steps 11–12 |
 | No flow data (cEOS sends no sFlow samples) | no per-flow reachability analysis yet | host-side sampling (pmacctd / hsflowd) → Elastic: [roadmap](observability-roadmap.md) step 10 |

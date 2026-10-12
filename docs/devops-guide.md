@@ -98,7 +98,7 @@ The pipeline is live (since 2026-10-11). How it is set up, for a rebuild:
    |---|---|
    | `EOS_USER` / `EOS_PASSWORD` | switch credentials (lab default admin/admin) |
    | `ELASTIC_ES_URL` / `ELASTIC_API_KEY` | Elastic endpoint and the lab key: collector export, change events, verify (**not set yet**: `automation/elastic gh-secrets`) |
-   | `ELASTIC_OTLP_ENDPOINT` | optional: a Managed OTLP endpoint; when set the collector uses it ([elastic.md](elastic.md#9-moving-to-a-managed-otlp-endpoint-later)) |
+   | `ELASTIC_OTLP_ENDPOINT` | optional: a Managed OTLP endpoint; when set the collector uses it ([elastic.md](elastic.md#10-moving-to-a-managed-otlp-endpoint-later)) |
 
 3. **Reviewers.** `.github/CODEOWNERS` names `@samurato`. `main` is protected: a PR, code-owner review and
    the `plan` check are required. Admins can bypass, so a sole maintainer merges with `gh pr merge --admin`.

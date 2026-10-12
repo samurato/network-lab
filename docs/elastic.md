@@ -16,10 +16,11 @@ Contents:
 4. [Collector profiles](#4-collector-profiles)
 5. [Data streams](#5-data-streams)
 6. [elastic/terraform](#6-elasticterraform)
-7. [Checking it works](#7-checking-it-works)
-8. [Operating it](#8-operating-it)
-9. [Moving to a Managed OTLP endpoint later](#9-moving-to-a-managed-otlp-endpoint-later)
-10. [Known limits](#10-known-limits)
+7. [Dashboards](#7-dashboards)
+8. [Checking it works](#8-checking-it-works)
+9. [Operating it](#9-operating-it)
+10. [Moving to a Managed OTLP endpoint later](#10-moving-to-a-managed-otlp-endpoint-later)
+11. [Known limits](#11-known-limits)
 
 ---
 
@@ -157,6 +158,7 @@ other work in the same project. The lab never writes to them.
 | `data-streams.tf` | one index template per lab metrics dataset. Each reuses Elasticsearch's built-in `metrics-otel@template` as-is (read live through a data source, so Elastic upgrades carry through) and adds a retention |
 | `security.tf` | the lab key's role descriptor (output `lab_api_key_role_descriptors`) |
 | `kibana.tf` | Kibana space `netops` and data views: fabric telemetry, app traces, change events, collector health |
+| `dashboards.tf` + `dashboards/queries.yml` | the three dashboards below; every panel is an ES\|QL chart, and every query lives in `queries.yml` |
 
 | Command | Does |
 |---|---|
@@ -179,7 +181,30 @@ Later roadmap steps add lookup indices, transforms, rules, SLOs and dashboards h
 
 ---
 
-## 7. Checking it works
+## 7. Dashboards
+
+In Kibana, open the **NetOps lab** space, then Dashboards:
+
+| Dashboard | ID | Shows |
+|---|---|---|
+| NetOps · Fabric health | `netops-fabric` | switches reporting, BGP sessions established, ports down, fabric traffic; traffic and BGP prefixes per switch over time; tables for BGP sessions not established, ports down, busiest ports, errors/discards/flaps, LLDP neighbours |
+| NetOps · Web app | `netops-web` | requests per minute, p95 latency, 5xx rate, pods reporting; requests per Kubernetes node and p95 latency per route over time; per-route and per-node tables |
+| NetOps · Pipeline & changes | `netops-pipeline` | gNMI docs per minute, switches silent for over 60 s, collector export queue, deploys in 24 h; docs per switch, collector throughput and queue over time; last data per switch; GitOps change events |
+
+- Tiles and "now" tables use a fixed short window (2 or 5 minutes). Charts follow the time picker through
+  `?_tstart` / `?_tend`. Each dashboard refreshes every 30 s.
+- Times show in the viewer's browser timezone (Kibana's default, `Browser`). Serverless doesn't expose the
+  advanced-settings API, so this isn't set in code; the lab devices themselves run Australia/Sydney.
+- To change a panel: edit its query in `elastic/terraform/dashboards/queries.yml` (run it in Discover first)
+  or its layout in `dashboards.tf`, then `make elastic-plan` and `make elastic`. Edits made in the Kibana UI are
+  overwritten by the next apply.
+- **Why `config_json`.** Each panel is written in the Kibana Dashboards API shape (`type`, `title`,
+  `data_source: {type: esql, query}`, `metrics` / `rows` / `layers`). The provider's typed chart blocks (0.16)
+  send fields this Serverless Kibana rejects (`invalid_union` on `data_source`, `styling`, `legend.placement`).
+
+---
+
+## 8. Checking it works
 
 ```bash
 make verify                               # == Elastic == section: switches, collector health, web traces
@@ -236,7 +261,7 @@ FROM logs-netops.changes-default
 
 ---
 
-## 8. Operating it
+## 9. Operating it
 
 | Task | How |
 |---|---|
@@ -257,7 +282,7 @@ FROM logs-netops.changes-default
 
 ---
 
-## 9. Moving to a Managed OTLP endpoint later
+## 10. Moving to a Managed OTLP endpoint later
 
 The project type decides it: Serverless **Observability** projects (and Elastic Cloud Hosted 9.x) have a
 Managed OTLP endpoint; this Elasticsearch project does not. The Observability apps (APM, Infrastructure,
@@ -274,7 +299,7 @@ without a path) on first use.
 
 ---
 
-## 10. Known limits
+## 11. Known limits
 
 - **No downsampling.** Serverless sets retention only (7 days for `metrics-gnmi`); the 1-minute downsampling
   in the roadmap is not configured.
