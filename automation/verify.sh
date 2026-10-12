@@ -108,5 +108,25 @@ docker exec clab-netops-attacker1 curl -sf -m 3 -o /dev/null http://10.99.0.10/h
 echo "== Telemetry =="
 series=$(curl -s localhost:9464/metrics | grep -c '^gnmi_')
 devices=$(curl -s localhost:9464/metrics | grep '^gnmi_' | grep -o 'source="[^"]*"' | sort -u | wc -l)
-[[ $series -gt 0 ]] && ok "otelcol has $series gnmi series from $devices devices" || bad "no gnmi metrics at otelcol"
+[[ $series -gt 0 ]] && ok "gnmic local tap (:9464) has $series gnmi series from $devices devices" \
+  || bad "no gnmi series on the gnmic local tap (:9464)"
+
+source automation/elastic-env.sh
+if [[ -n ${ELASTIC_ES_URL:-} && -n ${ELASTIC_API_KEY:-} ]]; then
+  echo "== Elastic (freshness, ES|QL) =="
+  esql() {   # esql <query> -> first result row as CSV ("" when the data stream does not exist yet)
+    curl -s -m 20 "$ELASTIC_ES_URL/_query?format=csv" -H "Authorization: ApiKey $ELASTIC_API_KEY" \
+      -H 'content-type: application/json' -d "$(jq -nc --arg q "$1" '{query: $q}')" | sed -n 2p | tr -d '\r'
+  }
+  ceos=$(yq -r '[.topology.nodes[] | select(.kind=="arista_ceos")] | length' "$TOPO")
+  IFS=, read -r docs devs < <(esql 'FROM metrics-gnmi.otel-* | WHERE @timestamp > NOW() - 2 minutes
+    | STATS docs = COUNT(*), devices = COUNT_DISTINCT(host.name)')
+  [[ ${devs:-0} -eq $ceos ]] && ok "metrics-gnmi: ${docs} docs from $devs/$ceos switches in the last 2 min" \
+    || bad "metrics-gnmi: ${devs:-0}/$ceos switches sent data in the last 2 min"
+  n=$(esql 'FROM metrics-otelcol.otel-* | WHERE @timestamp > NOW() - 2 minutes | STATS n = COUNT(*)')
+  [[ ${n:-0} -gt 0 ]] && ok "metrics-otelcol: collector health metrics arriving ($n docs in 2 min)" \
+    || bad "metrics-otelcol: no collector health metrics in the last 2 min"
+  n=$(esql 'FROM traces-*.otel-* | WHERE @timestamp > NOW() - 5 minutes AND service.name == "web" | STATS n = COUNT(*)')
+  [[ ${n:-0} -gt 0 ]] && ok "traces: $n web spans in the last 5 min" || bad "traces: no web spans in the last 5 min"
+fi
 exit $fail

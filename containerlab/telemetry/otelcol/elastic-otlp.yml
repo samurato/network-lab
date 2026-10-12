@@ -1,0 +1,35 @@
+# Profile `elastic-otlp` (future): every pipeline goes to an Elastic Managed OTLP endpoint instead of
+# straight to Elasticsearch.  automation/lab picks it over `elastic` as soon as ELASTIC_OTLP_ENDPOINT is set
+# (an Observability project or Elastic Cloud Hosted with mOTLP); nothing else in the lab changes.
+# Not exercised yet: the current project (Serverless, Elasticsearch type) has no Managed OTLP endpoint.
+extensions:
+  file_storage/queue:
+    directory: /tmp/otelcol-queue
+    create_directory: true
+
+exporters:
+  otlp_http/elastic:
+    endpoint: ${file:/etc/otelcol/secrets/otlp_endpoint}
+    headers:
+      Authorization: ApiKey ${file:/etc/otelcol/secrets/api_key}
+    sending_queue:
+      enabled: true
+      storage: file_storage/queue
+
+service:
+  extensions:
+    - health_check
+    - file_storage/queue
+  pipelines:
+    metrics:
+      exporters:
+        - debug
+        - otlp_http/elastic
+    traces:
+      exporters:
+        - debug
+        - otlp_http/elastic
+    logs:
+      exporters:
+        - debug
+        - otlp_http/elastic

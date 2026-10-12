@@ -37,7 +37,8 @@ stateDiagram-v2
 | `make redeploy` | same, but wipes the running lab first (needed when nodes or links change) | ~10 min |
 | `make down` | destroy the lab (also drops the Terraform state) | ~1 min |
 | `make plan` / `make apply` | network config diff / push (EOS config replace, FRR reload, hosts); `apply` syncs the lab bundle first | ~1 min |
-| `make sync` | refresh the lab bundle from `containerlab/` (gnmic targets, otelcol, scripts); never the topology | seconds |
+| `make sync` | refresh the lab bundle from `containerlab/` (gnmic targets, otelcol, scripts) and the collector's Elastic profile; restarts gnmic / otelcol if their files changed; never the topology | seconds |
+| `make elastic` / `make elastic-plan` | Terraform for the Elastic project (`elastic/terraform/`) | seconds |
 | `make k8s-plan` / `make k8s` | Terraform plan / apply inside Kubernetes | ~1–10 min |
 | `make verify` | all health checks; non-zero exit on any failure | ~1 min |
 | `make status` | containerlab node list | — |
@@ -96,7 +97,8 @@ The pipeline is live (since 2026-10-11). How it is set up, for a rebuild:
    | Secret | What |
    |---|---|
    | `EOS_USER` / `EOS_PASSWORD` | switch credentials (lab default admin/admin) |
-   | `ELASTIC_ES_URL` / `ELASTIC_API_KEY` | where change events are sent (optional, **not set yet**) |
+   | `ELASTIC_ES_URL` / `ELASTIC_API_KEY` | Elastic endpoint and the lab key: collector export, change events, verify (**not set yet**: `automation/elastic gh-secrets`) |
+   | `ELASTIC_OTLP_ENDPOINT` | optional: a Managed OTLP endpoint; when set the collector uses it ([elastic.md](elastic.md#9-moving-to-a-managed-otlp-endpoint-later)) |
 
 3. **Reviewers.** `.github/CODEOWNERS` names `@samurato`. `main` is protected: a PR, code-owner review and
    the `plan` check are required. Admins can bypass, so a sole maintainer merges with `gh pr merge --admin`.
@@ -105,17 +107,19 @@ The pipeline is live (since 2026-10-11). How it is set up, for a rebuild:
 
 ## Telemetry export to Elastic
 
-Details, data reference and troubleshooting: [streaming telemetry guide](telemetry.md).
+Setup, keys, Terraform and troubleshooting: [Elastic guide](elastic.md). Data reference: [streaming telemetry guide](telemetry.md).
 
 ```bash
-cp automation/elastic.env.example automation/elastic.env     # git-ignored
-# fill ELASTIC_OTLP_ENDPOINT (Elastic Cloud -> Observability -> Add data -> OpenTelemetry -> managed OTLP)
-# and ELASTIC_API_KEY
-make redeploy          # otelcol starts with the elastic profile
+cp automation/elastic.env.example automation/elastic.env     # git-ignored; fill URLs + admin key
+make elastic                                                 # Terraform: templates, Kibana space, data views
+automation/elastic role                                      # privileges for the lab key: create it in Kibana
+make sync                                                    # collector switches to the elastic profile
+automation/elastic gh-secrets                                # CI keeps it on (repository admin)
 ```
-- **Without the file**, telemetry stays local. Check it on the host with
-  `curl -s localhost:9464/metrics | grep -c ^gnmi_`.
-- **With the file**, otelcol sends OTLP to Elastic. A disk-backed queue rides out short Elastic outages.
+- **Without a lab key**, telemetry stays local. Check it on the host with
+  `curl -s localhost:9464/metrics | grep -c ^gnmi_` (gnmic's debug tap).
+- **With it**, the EDOT Collector writes to Elasticsearch. A disk-backed queue rides out short Elastic outages,
+  and `make verify` checks freshness in Elastic.
 
 ## Traffic and faults
 

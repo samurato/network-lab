@@ -19,7 +19,7 @@ Images it needs on that host:
 | `quay.io/frrouting/frr:10.7.1` | pulled automatically |
 | `ghcr.io/srl-labs/network-multitool:latest` | pulled automatically |
 | `ghcr.io/openconfig/gnmic:0.49.0` | pulled automatically |
-| `otel/opentelemetry-collector-contrib:0.162.0` | pulled automatically |
+| `docker.elastic.co/elastic-agent/elastic-otel-collector:9.5.5` | pulled automatically |
 | `rancher/k3s:v1.36.5-k3s1` | pulled automatically |
 | `grafana/k6:2.3.0`, `nicolaka/netshoot:v0.15` | pulled automatically |
 
@@ -28,12 +28,14 @@ Optional environment at deploy time:
 | Variable | Default | Effect |
 |---|---|---|
 | `EOS_USER` / `EOS_PASSWORD` | `admin` / `admin` | credentials gnmic uses for the switches |
-| `OTELCOL_PROFILE` | `local` | `elastic` loads `telemetry/otelcol/elastic.yml` and exports to Elastic |
-| `ELASTIC_OTLP_ENDPOINT` / `ELASTIC_API_KEY` | not set | Elastic managed OTLP endpoint and API key |
 | `K3S_TOKEN` | `netops-lab` | k3s cluster join token |
 
 The k3s nodes come up as a bare cluster (`NotReady`, no CNI). Pod networking, BGP, load balancers and
 apps are applied by Terraform from the repo (`automation/k8s apply`); see `../kubernetes/`.
+
+A plain `containerlab deploy` keeps telemetry in the lab: `telemetry/otelcol/profile.yml` is the `local`
+profile. In the repo, `automation/lab` replaces it with the Elastic profile and writes the Elastic URL and key
+into `telemetry/otelcol/secrets/` (see `../docs/elastic.md`).
 
 The management network is `172.20.20.0/24` (docker network `clab-mgmt`); it must be free on that host.
 
@@ -48,7 +50,7 @@ static/                  cEOS interface-name mapping, FRR daemons + vtysh.conf +
                          k8s/entrypoint.sh (k3s node entrypoint, copied from kubernetes/node/),
                          generators/ (k6 script)
 telemetry/gnmic/         gNMI collector: subscriptions, targets, unused-port filter
-telemetry/otelcol/       OpenTelemetry Collector: base.yml + profiles local.yml / elastic.yml
+telemetry/otelcol/       EDOT Collector: base.yml + profile.yml (= local.yml); profiles elastic.yml, elastic-otlp.yml
 ```
 
 ## Diagram

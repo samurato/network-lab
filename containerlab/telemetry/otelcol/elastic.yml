@@ -1,24 +1,34 @@
-# Profile `elastic`: merged on top of base.yml when deployed with OTELCOL_PROFILE=elastic.
-# ELASTIC_OTLP_ENDPOINT / ELASTIC_API_KEY come from the deploy environment (never committed).
+# Profile `elastic`: every pipeline also goes straight to Elasticsearch (elasticsearch exporter, OTel-native
+# mapping -> <type>-<dataset>.otel-default data streams).  automation/lab picks it when ELASTIC_ES_URL and
+# ELASTIC_API_KEY are set, and writes both into secrets/ (git-ignored, mode 600) — never into this file.
 extensions:
-  file_storage/queue:
-    directory: /tmp
+  file_storage/queue:            # survives an Elastic outage or a collector restart
+    directory: /tmp/otelcol-queue
+    create_directory: true
 
 exporters:
-  otlp_http/elastic:
-    endpoint: ${env:ELASTIC_OTLP_ENDPOINT}
-    headers:
-      Authorization: ApiKey ${env:ELASTIC_API_KEY}
+  elasticsearch/elastic:
+    endpoints:
+      - ${file:/etc/otelcol/secrets/es_url}
+    api_key: ${file:/etc/otelcol/secrets/api_key}
     sending_queue:
       enabled: true
       storage: file_storage/queue
 
 service:
   extensions:
+    - health_check
     - file_storage/queue
   pipelines:
     metrics:
       exporters:
         - debug
-        - prometheus
-        - otlp_http/elastic
+        - elasticsearch/elastic
+    traces:
+      exporters:
+        - debug
+        - elasticsearch/elastic
+    logs:
+      exporters:
+        - debug
+        - elasticsearch/elastic

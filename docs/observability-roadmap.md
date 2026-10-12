@@ -13,7 +13,7 @@ Work through the steps in order. Each step is one small PR. When its **Done when
 
 Rules for every step:
 
-- Elastic is the only backend. Prometheus `:9464` stays only as a local debug tap.
+- Elastic is the only backend. Prometheus `:9464` (on gnmic) stays only as a local debug tap.
 - Terraform wherever it fits.
 - Plain block YAML.
 - No secrets in git.
@@ -23,81 +23,82 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 
 ---
 
-## Where we are (2026-10-11)
+## Where we are (2026-10-12)
 
 | Works | Missing |
 |---|---|
-| gnmic → otelcol: interface counters, oper-status, BGP state and prefixes, LLDP, CPU and memory | Nothing reaches Elastic: CI has no `ELASTIC_OTLP_ENDPOINT` |
-| `change-event.sh` writes ECS change events | The secrets `ELASTIC_ES_URL` and `ELASTIC_API_KEY` are not set, so events stay in `~/netops-changes.jsonl` |
-| The `web` pods send OTLP traces | **otelcol has no traces pipeline, so the export fails with `404`** |
-| Hubble enabled in Cilium | Nothing from k8s or Cilium is collected |
-| | Flows: cEOS was seen to send no sFlow samples, so this needs a test or host-side sampling |
-| | Route tables (OpenConfig AFT), OSPF, EVPN/VXLAN, syslog, sFlow, FRR WAN, hosts, context indices, alert rules |
+| gnmic → EDOT Collector → Elastic: interface counters, oper-status, BGP state and prefixes, LLDP, CPU and memory, in `metrics-gnmi.otel-default` | Route tables (OpenConfig AFT), OSPF, EVPN/VXLAN, syslog, FRR WAN, hosts |
+| The `web` pods' traces, metrics and logs reach Elastic (`traces-generic.otel-default`) | Kubernetes, Cilium, Hubble |
+| `change-event.sh` writes ECS change events to `logs-netops.changes-default` | Context indices (topology, IP map, intent), alert rules, SLOs, dashboards |
+| `elastic/terraform/`: data stream templates, Kibana space `netops`, data views | Flows: cEOS was seen to send no sFlow samples, so this needs a test or host-side sampling |
+| `make verify` checks freshness in Elastic with ES\|QL | |
+
+The Elastic project is **Serverless, Elasticsearch type** (no Managed OTLP endpoint, no Observability apps).
+The collector writes straight to Elasticsearch and is ready for a Managed OTLP endpoint
+([elastic.md § 9](elastic.md#9-moving-to-a-managed-otlp-endpoint-later)). Steps 14 and 16 need an
+Observability project for Synthetics and SLOs.
 
 ---
 
 ## Step 0 – Prerequisites (before writing code)
 
-- [ ] Get from the Elastic owner:
-  - the deployment type and version (assumed: Elastic Cloud 9.x on AWS);
-  - the **Managed OTLP endpoint** URL;
-  - the Elasticsearch URL;
-  - an API key for ingest;
-  - an API key for Terraform (management).
-- [ ] Put them in the git-ignored `automation/elastic.env` on the host:
-  ```sh
-  ELASTIC_OTLP_ENDPOINT=https://<id>.ingest.<region>.aws.elastic.cloud:443
-  ELASTIC_ES_URL=https://<id>.es.<region>.aws.elastic.cloud
-  ELASTIC_API_KEY=<ingest key>
-  ```
-- [ ] Add the same three values as GitHub secrets (you need repo admin rights for this):
-  ```sh
-  gh secret set ELASTIC_OTLP_ENDPOINT
-  gh secret set ELASTIC_ES_URL
-  gh secret set ELASTIC_API_KEY
-  ```
-- [ ] Start every step from the latest `main` on a new branch:
+- [x] Elastic details: Serverless Elasticsearch project 9.6 in `ap-southeast-2`; Elasticsearch and Kibana
+  endpoints; an admin API key.
+- [x] Put them in the git-ignored `automation/elastic.env` on the host (`ELASTIC_ES_URL`, `ELASTIC_KIBANA_URL`,
+  `ELASTIC_TF_API_KEY`). See [elastic.md § First-time setup](elastic.md#3-first-time-setup).
+- [ ] Create the restricted lab key (`automation/elastic role`, then Kibana → API keys) and put it in
+  `ELASTIC_API_KEY`.
+- [ ] Copy the CI settings into the repository secrets (owner): `automation/elastic gh-secrets`.
+- [x] Start every step from the latest `main` on a new branch:
   ```sh
   git switch main && git pull && git switch -c <branch>
   ```
 
-**Done when:** `curl -s -H "Authorization: ApiKey $ELASTIC_API_KEY" "$ELASTIC_ES_URL"` returns the cluster info.
+**Done when:** `make verify` passes its `== Elastic ==` section with the lab key, and a CI deploy logs
+`collector profile: elastic`.
 
 ---
 
 ## Phase P0 – Foundation: get today's data into Elastic
 
 ### Step 1 – Collector accepts traces and logs (fixes the web 404)
-- [ ] `containerlab/telemetry/otelcol/base.yml`:
-  - add `traces` and `logs` pipelines, both fed by the `otlp` receiver;
-  - add the `memory_limiter` processor;
-  - turn on the collector's own metrics (`service.telemetry.metrics`).
-- [ ] `elastic.yml`: send all three pipelines to `otlp_http/elastic`.
-- [ ] `automation/render.py` (the `nodes["otelcol"]` block): switch the image to the **EDOT Collector**, Elastic's OTel distribution, and pin its version.
+- [x] `containerlab/telemetry/otelcol/base.yml`: `traces` and `logs` pipelines next to `metrics`;
+  `memory_limiter`; the collector's own metrics scraped into `metrics-otelcol`; `data_stream.dataset` per source.
+- [x] Profiles: `elastic.yml` (`elasticsearch` exporter straight to Elasticsearch, disk queue) and
+  `elastic-otlp.yml` (OTLP to a Managed OTLP endpoint, for later).
+- [x] `automation/render.py`: the **EDOT Collector** image, pinned (`9.5.5`). The EDOT Collector has no
+  Prometheus exporter, so the local `:9464` debug tap moved to a gnmic Prometheus output.
 
-**Done when:**
-- `kubectl -n prod logs deploy/web` shows no more `404`;
-- the `debug` exporter prints spans.
+**Done when:** the web pods log no more `404`, and their spans are in Elastic.
 
 ### Step 2 – CI keeps the Elastic export on
-- [ ] `.github/workflows/deploy.yml` and `drift.yml`: pass `ELASTIC_OTLP_ENDPOINT`, `ELASTIC_API_KEY` and `ELASTIC_ES_URL` from the secrets. The `Makefile` then picks `OTELCOL_PROFILE=elastic` automatically.
+- [x] `automation/lab` chooses the collector profile from the Elastic settings every time it copies the bundle
+  (also in CI's `converge`), writes the URL and key into files only the collector reads, and restarts a
+  telemetry node when its files change. One loader, `automation/elastic-env.sh`, serves the lab helper,
+  Terraform, `verify.sh` and `change-event.sh`.
+- [x] `.github/workflows/deploy.yml`: passes `ELASTIC_ES_URL`, `ELASTIC_OTLP_ENDPOINT` and `ELASTIC_API_KEY`
+  from the secrets.
 
 **Done when:**
-- after a CI deploy, `docker inspect clab-netops-otelcol` shows the `elastic.yml` profile;
+- a CI deploy logs `collector profile: elastic`;
 - `logs-netops.changes-default` has the deploy event.
 
 ### Step 3 – Elastic managed as code
-- [ ] New folder `elastic/terraform/` using the `elastic/elasticstack` provider, with state on the host like the k8s state.
-- [ ] Create:
-  - index templates and lifecycle settings (TSDS for `metrics-gnmi.*`: 7 days raw, then downsampled to 1 minute);
-  - one API key per signal (least privilege);
-  - the Kibana space.
-- [ ] Add `make elastic` (plan and apply), following the pattern of `automation/k8s`.
+- [x] `elastic/terraform/` with the `elastic/elasticstack` provider; state in
+  `~/.local/share/netops/terraform-elastic.tfstate` (outlives the lab). `make elastic` / `make elastic-plan`
+  via `automation/elastic`.
+- [x] Index templates for `metrics-gnmi.otel-*` (TSDS, 7 days) and `metrics-otelcol.otel-*` (3 days), reusing
+  Elastic's built-in OTel template.
+- [x] The lab key's privileges as code (`security.tf`). The key itself is made in Kibana: an API key can't
+  create another key with privileges.
+- [x] Kibana space `netops` and data views.
+- [ ] Downsampling to 1 minute: not available with Serverless retention settings; revisit if the project changes.
 
-**Done when:** `make elastic` shows no changes on a second run.
+**Done when:** `make elastic-plan` shows no changes on a second run. ✔
 
 ### Step 4 – Verification checks Elastic, not the local tap
-- [ ] `automation/verify.sh`: add an ES|QL check of document count and newest `@timestamp` per data stream (`metrics-gnmi*`, `traces-*`). Keep the `:9464` check as the fallback when there is no Elastic.
+- [x] `automation/verify.sh`: ES|QL checks that all 14 switches sent data in the last 2 minutes, that the
+  collector's own metrics arrive, and that web spans arrive. The `:9464` check stays.
 
 **Done when:** `make verify` shows PASS for Elastic freshness.
 
@@ -256,4 +257,4 @@ In `automation/telemetry/gnmic.base.yml`:
 ## Progress log
 | Date | Step | PR | Notes |
 |---|---|---|---|
-| | | | |
+| 2026-10-12 | 0–4 | `obs-p0-elastic-foundation` | EDOT Collector writing straight to Elasticsearch (Serverless Elasticsearch project, no Managed OTLP); profile `elastic-otlp` ready; `elastic/terraform`; verify via ES\|QL. Lab key and CI secrets still to be created by the owner |

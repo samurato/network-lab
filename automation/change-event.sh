@@ -5,6 +5,7 @@
 #   automation/change-event.sh <status> [apply.log]
 set -uo pipefail
 status=${1:-unknown}; log=${2:-/dev/null}
+source "$(dirname "$0")/elastic-env.sh"   # CI: repository secrets; lab host: automation/elastic.env
 devices=$(grep -E '^[a-z0-9-]+ +: ok=' "$log" 2>/dev/null | awk '$4 != "changed=0" {print $1}' | jq -R . | jq -sc .)
 event=$(jq -nc --arg ts "$(date -u +%FT%TZ)" --arg sha "$(git rev-parse HEAD)" \
   --arg msg "$(git log -1 --pretty=%s)" --arg author "$(git log -1 --pretty=%an)" \

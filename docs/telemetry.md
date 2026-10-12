@@ -6,8 +6,8 @@ the reference for the data it consumes.
 
 | | |
 |---|---|
-| **Works today** | All 14 cEOS switches stream gNMI to gnmic, then over OTLP to an OpenTelemetry Collector. About 3,600 live series. |
-| **Not yet** | Export to Elastic is built but off (no endpoint configured). Metrics only: traces and logs are dropped. WAN routers, hosts and syslog are not collected. See [Known gaps](#9-known-gaps) and the [roadmap](#10-roadmap-proposed). |
+| **Works today** | All 14 cEOS switches stream gNMI to gnmic, then over OTLP to the EDOT Collector (Elastic's OpenTelemetry distribution), which writes to Elastic. The web app's traces, metrics and logs take the same path. About 3,600 live series. |
+| **Not yet** | WAN routers, hosts, syslog, routes, flows, Kubernetes and Cilium are not collected. See [Known gaps](#9-known-gaps) and the [roadmap](observability-roadmap.md). The Elastic side (keys, data streams, Terraform) is described in [elastic.md](elastic.md). |
 
 Contents:
 1. [Architecture](#1-architecture)
@@ -33,24 +33,24 @@ flowchart LR
   end
   subgraph TEL["Telemetry containers"]
     GN["gnmic 0.49<br/>172.20.20.251"]
-    OC["otelcol-contrib 0.162<br/>172.20.20.250"]
+    OC["EDOT Collector 9.5<br/>172.20.20.250"]
   end
   APP["web pods (k3s)<br/>EDOT Python SDK"]
   SW -- "gNMI Subscribe<br/>sample + on-change" --> GN
   GN -- "OTLP gRPC :4317<br/>metrics" --> OC
   APP -- "OTLP HTTP :4318<br/>metrics, traces, logs" --> OC
-  OC -- "always" --> PROM["Prometheus endpoint<br/>host :9464"]
+  GN -- "always" --> PROM["Prometheus endpoint<br/>host :9464 (local debug tap)"]
   OC -- "always" --> DBG["debug exporter<br/>(container log)"]
-  OC -. "profile elastic only<br/>OTLP HTTP + disk queue" .-> ES["Elastic<br/>managed OTLP endpoint"]
-  CI["deploy workflow<br/>change-event.sh"] -. "_doc API" .-> CH["logs-netops.changes"]
+  OC -- "profile elastic:<br/>elasticsearch exporter + disk queue" --> ES["Elastic<br/>(Elasticsearch endpoint)"]
+  CI["deploy workflow<br/>change-event.sh"] -- "_doc API" --> CH["logs-netops.changes"]
   CH --- ES
 ```
 
 | Component | Image | Address | Ports | Role |
 |---|---|---|---|---|
 | cEOS switches (14) | `ceos:4.36.2F` | `172.20.20.11`–`.28` (see [IP plan](ip-plan.md)) | gNMI `6030/tcp`, MGMT VRF | source of all network state |
-| `gnmic` | `ghcr.io/openconfig/gnmic:0.49.0` | `172.20.20.251` | none exposed | subscribes to every switch, turns updates into OTLP metrics |
-| `otelcol` | `otel/opentelemetry-collector-contrib:0.162.0` | `172.20.20.250` | `4317` gRPC, `4318` HTTP (lab), `9464` (published on the host) | labels, batches and exports every signal |
+| `gnmic` | `ghcr.io/openconfig/gnmic:0.49.0` | `172.20.20.251` | `9464` (Prometheus debug tap, published on the host) | subscribes to every switch, turns updates into OTLP metrics |
+| `otelcol` | `docker.elastic.co/elastic-agent/elastic-otel-collector:9.5.5` (EDOT Collector) | `172.20.20.250` | `4317` gRPC, `4318` HTTP (lab only) | adds the data contract, exports every signal to Elastic |
 
 Both telemetry containers are management-only nodes: they have no data-plane links, so they run with
 `restart-policy: always` and may be restarted freely (unlike the switches, see the
@@ -64,8 +64,10 @@ Both telemetry containers are management-only nodes: they have no data-plane lin
    - turn state enums into numbers;
    - convert everything to floats.
 4. gnmic sends the events as OTLP metrics. Counters become cumulative monotonic sums; everything else becomes gauges.
-5. The collector adds `device` and `lab`, batches, and exports. Exports go to the local Prometheus endpoint
-   and, with the `elastic` profile, to Elastic.
+5. The collector adds `host.name`, `device`, `lab` and `data_stream.dataset: gnmi`, then exports to Elastic
+   (profile `elastic`), where the data lands in `metrics-gnmi.otel-default`.
+6. gnmic also serves the same series on `:9464` (Prometheus format). That is only a local debug tap, and the
+   fallback check in `make verify`.
 
 ---
 
@@ -75,14 +77,17 @@ Everything is generated from the repo; nothing on the host is hand-edited.
 
 | File | Edit? | What it holds |
 |---|---|---|
-| `automation/telemetry/gnmic.base.yml` | **yes** | subscriptions, processors, the OTLP output |
-| `containerlab/telemetry/otelcol/base.yml` | **yes** | collector receivers, processors, exporters, pipelines |
-| `containerlab/telemetry/otelcol/elastic.yml` | **yes** | Elastic profile: the OTLP exporter to Elastic and the disk queue |
-| `containerlab/telemetry/otelcol/local.yml` | **yes** | default profile: nothing exported |
+| `automation/telemetry/gnmic.base.yml` | **yes** | subscriptions, processors, the OTLP output and the Prometheus debug tap |
+| `containerlab/telemetry/otelcol/base.yml` | **yes** | collector receivers, processors, pipelines (metrics, traces, logs) |
+| `containerlab/telemetry/otelcol/elastic.yml` | **yes** | profile `elastic`: the `elasticsearch` exporter and the disk queue |
+| `containerlab/telemetry/otelcol/elastic-otlp.yml` | **yes** | profile `elastic-otlp`: OTLP to a Managed OTLP endpoint (for later) |
+| `containerlab/telemetry/otelcol/local.yml` | **yes** | profile `local`: nothing exported |
+| `containerlab/telemetry/otelcol/profile.yml` | no, generated | copy of `local.yml`; `automation/lab` overwrites it in the running bundle |
 | `containerlab/telemetry/gnmic/targets.yml` | no, generated | one target per switch with its tags |
 | `containerlab/telemetry/gnmic/gnmic.yml` | no, generated | the base file plus the per-device `used-ports` filter |
-| `automation/render.py` (section `# ---- telemetry`) | code | builds the two generated files and the `gnmic` and `otelcol` nodes in `netops.clab.yml` |
-| `automation/elastic.env` | yes, **git-ignored** | `ELASTIC_OTLP_ENDPOINT`, `ELASTIC_API_KEY` |
+| `automation/render.py` (section `# ---- telemetry`) | code | builds the generated files and the `gnmic` and `otelcol` nodes in `netops.clab.yml` |
+| `automation/lab` (`collector_profile`) | code | picks the collector profile, writes the Elastic secrets into the bundle, restarts changed telemetry nodes |
+| `automation/elastic.env` | yes, **git-ignored** | Elastic settings and keys, see [elastic.md](elastic.md#2-settings-and-keys) |
 | `automation/change-event.sh` | code | the per-deploy change event |
 | `automation/verify.sh` (section `== Telemetry ==`) | code | the telemetry check in `make verify` |
 
@@ -103,7 +108,8 @@ Notes on generation:
   `Vxlan1` where the device is a VTEP. cEOS exposes 16 Ethernet ports, and without the filter the unused ones would
   add about 60 % more interface series.
 - **The running containers read from the bundle**, `~/clab-runs/netops-bundle`, not from the repo
-  checkout. `make sync` (or `make apply`, which runs it) copies the files there in place.
+  checkout. `make sync` (or `make apply`, which runs it) copies the files there in place, and restarts
+  gnmic or the collector if any of their files changed.
 
 ---
 
@@ -174,6 +180,11 @@ outputs:
       - vendor
     counter-patterns:
       - octets|pkts|packets|errors|discards|drops|messages
+  prom:                       # local debug tap only
+    type: prometheus
+    listen: :9464
+    metric-prefix: gnmi
+    strings-as-labels: true
 ```
 
 | Setting | Effect |
@@ -187,36 +198,39 @@ outputs:
 
 ## 5. OpenTelemetry Collector: the gateway
 
-The collector is started with two config files merged in order:
-`--config /etc/otelcol/base.yml --config /etc/otelcol/${OTELCOL_PROFILE}.yml`.
+The collector is the **EDOT Collector** (Elastic Distribution of OpenTelemetry), started with two config
+files merged in order: `--config /etc/otelcol/base.yml --config /etc/otelcol/profile.yml`.
 
 | Profile | Chosen when | Adds |
 |---|---|---|
-| `local` (default) | `ELASTIC_OTLP_ENDPOINT` is empty | info-level logging only. Telemetry stays in the lab |
-| `elastic` | `automation/elastic.env` sets `ELASTIC_OTLP_ENDPOINT` (the Makefile then exports `OTELCOL_PROFILE=elastic`) | the `otlp_http/elastic` exporter with `Authorization: ApiKey …`, and a disk-backed sending queue (`file_storage/queue`) |
+| `local` | no `ELASTIC_API_KEY` | info-level logging only. Telemetry stays in the lab |
+| `elastic` | `ELASTIC_ES_URL` + `ELASTIC_API_KEY` | the `elasticsearch/elastic` exporter (OTel-native mapping) and a disk-backed queue |
+| `elastic-otlp` | `ELASTIC_OTLP_ENDPOINT` + `ELASTIC_API_KEY` | the `otlp_http/elastic` exporter to a Managed OTLP endpoint (ready, not used yet) |
 
-The profile is fixed when the container is created, so changing it needs `make redeploy`.
+`automation/lab` chooses the profile and writes the URL and key into files only the collector reads, every
+time it copies the bundle, and restarts the collector when they change. Details in
+[elastic.md § Collector profiles](elastic.md#4-collector-profiles).
 
 ### The pipeline today
 
 ```
-receivers:  otlp (gRPC 0.0.0.0:4317, HTTP 0.0.0.0:4318)
-metrics:    otlp -> transform/contract -> batch -> debug, prometheus [, otlp_http/elastic]
-traces:     none (dropped)
-logs:       none (dropped)
+receivers:  otlp (gRPC 0.0.0.0:4317, HTTP 0.0.0.0:4318), prometheus/self (the collector's own metrics)
+metrics:    otlp, prometheus/self -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
+traces:     otlp                  -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
+logs:       otlp                  -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
 ```
 
-- **`transform/contract`** sets two resource attributes on every metric:
-  - `device` = `source`;
-  - `lab` = `netops`.
-- **`prometheus`** serves everything on `:9464` with resource attributes turned into labels. It's the local
-  sanity check, and what `make verify` reads.
+- **`transform/contract`** sets resource attributes:
+  - on metrics: `host.name` and `device` = `source`; `lab` = `netops`; `data_stream.dataset` = `gnmi` for
+    gnmic and `otelcol` for the collector's own metrics;
+  - on traces and logs: `lab` = `netops`.
+- **`memory_limiter`** refuses data before the collector runs out of memory.
+- **`prometheus/self`** scrapes the collector's own metrics from `127.0.0.1:8888`: points accepted, refused,
+  sent and failed, and the queue size.
 - **`debug`** (verbosity `basic`) logs one line per batch to the container log.
 
-**Other senders already present:** the web app (`kubernetes/terraform/apps.tf`) sends to
-`http://172.20.20.250:4318` using Elastic's OpenTelemetry Python distribution (EDOT). Its metrics are
-collected (`http_server_duration_milliseconds`, CPython runtime metrics). Its traces and logs are not,
-because the collector has no traces or logs pipeline.
+**Other senders:** the web app (`kubernetes/terraform/apps.tf`) sends traces, metrics and logs to
+`http://172.20.20.250:4318` with Elastic's OpenTelemetry Python distribution (EDOT).
 
 ---
 
@@ -226,6 +240,7 @@ because the collector has no traces or logs pipeline.
 
 | Attribute | Level | Example | Source |
 |---|---|---|---|
+| `host.name` | resource | `dc1-leaf1` | collector (`= source`) |
 | `device` | resource | `dc1-leaf1` | collector (`= source`) |
 | `source` | resource | `dc1-leaf1` | gnmic target name |
 | `site` | resource | `dc1`, `dc2` | inventory, via `targets.yml` |
@@ -234,12 +249,16 @@ because the collector has no traces or logs pipeline.
 | `lab` | resource | `netops` | collector |
 | `service.name` | resource | `gnmic` | gnmic output |
 | `deployment.environment` | resource | `hackathon` | gnmic output |
-| `subscription_name` | data point | `if-counters` | gnmic |
-| path keys | data point | `interface_name`, `network_instance_name`, `neighbor_neighbor_address`, `afi_safi_afi_safi_name`, `component_name`, `neighbor_id` | the gNMI path |
+| `subscription-name` | data point | `if-counters` | gnmic |
+| path keys | data point | `interface_name`, `network-instance_name`, `neighbor_neighbor-address`, `afi-safi_afi-safi-name`, `component_name`, `neighbor_id` | the gNMI path |
+
+In Elastic the attribute names keep gnmic's hyphens, so ES|QL needs backticks: `` `neighbor_neighbor-address` ``.
+The Prometheus debug tap turns hyphens into underscores (`neighbor_neighbor_address`). Short, consistent names
+come with [roadmap step 6](observability-roadmap.md#step-6--gnmic-subscriptions).
 
 ### Metrics
 
-Names below are the OTLP names. The Prometheus endpoint adds `_total` to counters.
+Names below are the OTLP names, which are also the field names in Elastic. The Prometheus debug tap adds `_total` to counters.
 
 | Metric | Type | Labels (besides resource) | Meaning |
 |---|---|---|---|
@@ -272,75 +291,71 @@ Names below are the OTLP names. The Prometheus endpoint adds `_total` to counter
 
 ## 7. Elastic
 
-### Turning export on
+Setup, keys, profiles, data streams, Terraform and troubleshooting are in [elastic.md](elastic.md). In short:
 
-```bash
-cp automation/elastic.env.example automation/elastic.env     # git-ignored, never commit it
-# ELASTIC_OTLP_ENDPOINT = Elastic Cloud -> Observability -> Add data -> OpenTelemetry -> managed OTLP endpoint
-# ELASTIC_API_KEY       = an API key with ingest rights
-make redeploy          # the collector is recreated with OTELCOL_PROFILE=elastic
-docker logs clab-netops-otelcol 2>&1 | grep -i -E 'elastic|error' | tail
-```
-
-> **CI caveat.** The deploy workflow runs in its own checkout, which has no `automation/elastic.env`. When
-> CI redeploys the lab (`automation/lab converge` after a topology change), the collector comes back with
-> the `local` profile and Elastic export stops. Until the roadmap item
-> [one Elastic config for every path](#phase-0-turn-elastic-on-and-keep-every-signal) is done, run
-> `make redeploy` by hand after a CI redeploy. Alternatively, set the endpoint as repository secrets and pass them
-> to the deploy step.
-
-### Where the data lands
-
-| Data | Data stream | Written by |
-|---|---|---|
-| gNMI metrics and the app's metrics | `metrics-generic.otel-default`: Elastic's default for OTLP without a dataset; the [roadmap](#phase-1-make-the-data-easy-for-the-agent) splits it per source | collector, `otlp_http/elastic` |
-| Deploy change events | `logs-netops.changes-default` | `automation/change-event.sh`, needs `ELASTIC_ES_URL` + `ELASTIC_API_KEY` (repository secrets in CI) |
+| Data | Data stream |
+|---|---|
+| gNMI metrics | `metrics-gnmi.otel-default` (time series, 7 days) |
+| the collector's own metrics | `metrics-otelcol.otel-default` (3 days) |
+| web app traces, metrics, logs | `traces-generic.otel-default`, `metrics-generic.otel-default`, `logs-generic.otel-default` |
+| deploy change events | `logs-netops.changes-default` |
 
 Elastic stores OpenTelemetry data with its OTel-native mapping:
 - resource attributes go under `resource.attributes.*`;
 - data-point attributes go under `attributes.*`;
 - metric values are fields named after the metric.
 
-The attribute objects are pass-through, so `device` and `interface_name` can be used directly in ES|QL.
+The attribute objects are pass-through, so `host.name` and `interface_name` can be used directly in ES|QL.
 
 ### Starter ES|QL for the agent
 
-These are written against the names above. Check them against the first real data; counter fields may need
-`TS … | STATS RATE(…)` (Elastic 9.2+) instead of `MAX - MIN`.
+`metrics-gnmi` is a time series data stream: counters (octets, packets, errors, discards) are typed
+`counter_double`. Use `TS … | STATS SUM(RATE(…))` for rates, or wrap them in `TO_DOUBLE()` for `MAX`/`MIN`.
+All the queries below were run against the live data.
 
 ```esql
 // BGP sessions not established right now
-FROM metrics-generic.otel-default
+FROM metrics-gnmi.otel-*
 | WHERE @timestamp > NOW() - 2 minutes
   AND gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state IS NOT NULL
-| STATS state = LAST(gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state, @timestamp)
-    BY device, network_instance_name, neighbor_neighbor_address
+| STATS state = MAX(gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state)
+    BY host.name, `network-instance_name`, `neighbor_neighbor-address`
 | WHERE state < 6
 ```
 
 ```esql
 // cabled ports that are down
-FROM metrics-generic.otel-default
+FROM metrics-gnmi.otel-*
 | WHERE @timestamp > NOW() - 2 minutes AND gnmi_interfaces_interface_state_oper_status IS NOT NULL
-| STATS up = LAST(gnmi_interfaces_interface_state_oper_status, @timestamp) BY device, interface_name
+| STATS up = MIN(gnmi_interfaces_interface_state_oper_status) BY host.name, interface_name
 | WHERE up == 0
 ```
 
 ```esql
 // ports with errors or discards in the last 5 minutes
-FROM metrics-generic.otel-default
-| WHERE @timestamp > NOW() - 5 minutes AND service.name == "gnmic"
-| STATS err = MAX(gnmi_interfaces_interface_state_counters_in_errors) - MIN(gnmi_interfaces_interface_state_counters_in_errors),
-        dsc = MAX(gnmi_interfaces_interface_state_counters_in_discards) - MIN(gnmi_interfaces_interface_state_counters_in_discards)
-    BY device, interface_name
+FROM metrics-gnmi.otel-*
+| WHERE @timestamp > NOW() - 5 minutes
+| STATS err = MAX(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_errors)) - MIN(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_errors)),
+        dsc = MAX(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_discards)) - MIN(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_discards))
+    BY host.name, interface_name
 | WHERE err > 0 OR dsc > 0
 ```
 
 ```esql
+// busiest ports right now (bits per second in)
+TS metrics-gnmi.otel-*
+| WHERE @timestamp > NOW() - 5 minutes
+| STATS in_bps = SUM(RATE(gnmi_interfaces_interface_state_counters_in_octets)) * 8 BY host.name, interface_name
+| WHERE in_bps IS NOT NULL
+| SORT in_bps DESC
+| LIMIT 10
+```
+
+```esql
 // telemetry gap: switches silent for more than 60 s
-FROM metrics-generic.otel-default
-| WHERE @timestamp > NOW() - 15 minutes AND service.name == "gnmic"
-| STATS last_seen = MAX(@timestamp) BY device
+FROM metrics-gnmi.otel-*
+| WHERE @timestamp > NOW() - 15 minutes
+| STATS last_seen = MAX(@timestamp) BY host.name
 | WHERE last_seen < NOW() - 60 seconds
 ```
 
@@ -359,11 +374,11 @@ FROM logs-netops.changes-default
 ### Health checks
 
 ```bash
-make verify                                                     # "otelcol has N gnmi series from 14 devices"
-curl -s localhost:9464/metrics | grep -c '^gnmi_'               # series count (about 3,600)
-curl -s localhost:9464/metrics | grep '^gnmi_' | grep -o 'device="[^"]*"' | sort | uniq -c   # per switch
+make verify                                                     # local tap + the == Elastic == freshness checks
+curl -s localhost:9464/metrics | grep -c '^gnmi_'               # series count on gnmic's debug tap (about 3,600)
+curl -s localhost:9464/metrics | grep '^gnmi_' | grep -o 'source="[^"]*"' | sort | uniq -c   # per switch
 docker logs --tail 50 clab-netops-gnmic                         # subscription errors, target reconnects
-docker logs --tail 20 clab-netops-otelcol                       # one "Metrics" line per batch; export errors
+docker logs --tail 20 clab-netops-otelcol                       # one line per batch; export errors
 ```
 
 ### Ad hoc gNMI from the host
@@ -383,24 +398,24 @@ $GN -a 172.20.20.13:6030 subscribe --path /interfaces/interface/state/oper-statu
 1. Edit `automation/telemetry/gnmic.base.yml`. Use block YAML, like the rest of the repo.
 2. Check the path on one switch first, with `get` as above.
 3. Run `make build` and review `git diff containerlab/telemetry/`.
-4. Run `make sync` to copy the files into the running lab's bundle.
-5. Run `docker restart clab-netops-gnmic`. This is safe: the container has no data-plane links.
-6. Check that the new series appear on `:9464`, then open a pull request. On merge, CI syncs the bundle; restart gnmic again
-   if the subscriptions changed.
+4. Run `make sync`. It copies the files into the running lab's bundle and restarts gnmic, because its files
+   changed. This is safe: the container has no data-plane links.
+5. Check that the new series appear on `:9464` and in Elastic, then open a pull request. On merge, CI syncs
+   the bundle and restarts gnmic the same way.
 
-Collector changes (`containerlab/telemetry/otelcol/*.yml`) work the same way: `make sync`, then
-`docker restart clab-netops-otelcol`. A profile change needs `make redeploy`.
+Collector changes (`containerlab/telemetry/otelcol/*.yml`) and Elastic setting changes work the same way:
+`make sync` restarts the collector when anything it reads changed.
 
 ### Troubleshooting
 
 | Symptom | Look at | Usual cause / fix |
 |---|---|---|
-| `no gnmi metrics at otelcol` in `make verify` | `docker logs clab-netops-gnmic` | switches not ready yet (wait for `automation/lab wait`), or gnmic exited on a bad config: fix `gnmic.base.yml`, `make build sync`, restart |
+| `no gnmi series on the gnmic local tap` in `make verify` | `docker logs clab-netops-gnmic` | switches not ready yet (wait for `automation/lab wait`), or gnmic exited on a bad config: fix `gnmic.base.yml`, `make build sync` |
 | one switch missing from the per-device count | gnmic log for that target | gNMI disabled or the switch restarting; `show management api gnmi` on the switch |
 | `rpc error: code = InvalidArgument ... path invalid` | the subscription in the gnmic log | the path isn't in the switch's models; check with `capabilities` and `get` |
-| new subscription not showing | `docker logs clab-netops-gnmic` start-up lines | gnmic not restarted after `make sync` |
+| new subscription not showing | `docker logs clab-netops-gnmic` start-up lines | the running bundle is not updated: `make sync` (it restarts gnmic) |
 | series for unused ports | `containerlab/telemetry/gnmic/gnmic.yml` `used-ports` | the port isn't in the device's AVD interfaces; `make build` regenerates the filter |
-| nothing reaches Elastic | collector log, `docker inspect clab-netops-otelcol` cmd | profile is `local` (no endpoint, or CI redeployed without it); wrong key → `401` in the log |
+| nothing reaches Elastic | collector log; `collector profile:` line of `make sync` | profile is `local` (no key, or CI without the repository secrets); wrong key → `401` / `403` in the log. See [elastic.md § Operating it](elastic.md#8-operating-it) |
 | `Stale file handle` from a telemetry container | `docker inspect` binds | the lab is running from the SMB checkout instead of the bundle; `make redeploy` |
 
 ---
@@ -410,12 +425,12 @@ Collector changes (`containerlab/telemetry/otelcol/*.yml`) work the same way: `m
 Checked against the live lab. The paths marked ✗ were tried on `dc1-leaf1` / `dc1-bgw1`.
 
 **Elastic and pipeline**
-- Export is off. No endpoint is configured, and CI redeploys bring the collector back as `local`.
-- Only metrics are kept. The web app's traces and logs are dropped.
-- Change events use a second endpoint (`ELASTIC_ES_URL`), separate from the collector's.
-- Everything lands in one generic data stream.
-- One gnmic and one collector. Neither one's own health is collected, and nothing raises a "telemetry gap".
-- The export queue lives in `/tmp` inside the collector container, so it is lost when the container is recreated.
+- CI keeps Elastic on only once the repository secrets are set ([elastic.md § First-time setup](elastic.md#3-first-time-setup)).
+- The project has no Managed OTLP endpoint, so the collector writes straight to Elasticsearch. The
+  `elastic-otlp` profile is ready for when it has one.
+- One gnmic and one collector. The collector's own metrics reach Elastic; gnmic's do not, and no rule raises
+  a "telemetry gap" yet.
+- The export queue lives in `/tmp` inside the collector container: it survives a restart, not a redeploy.
 
 **Data model**
 - No neighbour context: a port or BGP session has no `peer_device`, `peer_interface`, `link_id` or
@@ -443,7 +458,6 @@ Checked against the live lab. The paths marked ✗ were tried on `dc1-leaf1` / `
 | Syslog | no `logging host` configured on any device |
 | Routing table (OpenConfig AFT), BGP RIB | empty: needs `management api models` → `provider aft` on the switches. Arista native `eos_native:/Smash/routing/status/route` works, but routes point to FEC IDs |
 | Flows (sFlow / IPFIX) | not configured (cEOS was seen to send no sFlow samples; IPFIX unproven) |
-| App traces and logs | the web pods' export fails with HTTP 404: the collector has no traces or logs pipeline |
 | Hosts and Kubernetes nodes (network) | not collected |
 
 ---
@@ -453,7 +467,7 @@ Checked against the live lab. The paths marked ✗ were tried on `dc1-leaf1` / `
 The step-by-step build plan, from network devices to Kubernetes, Cilium and the web app, is in
 [observability-roadmap.md](observability-roadmap.md). This section keeps the design reasoning.
 
-**Not built yet.** The aim is to use Elastic for as much as possible: its collector, its endpoint, its lookups,
+**Partly built.** Phase 0 below is done (see the roadmap's progress log). The aim is to use Elastic for as much as possible: its collector, its endpoint, its lookups,
 alerts, SLOs and synthetic monitoring, with the Elastic side defined in Terraform.
 
 ```mermaid
@@ -548,6 +562,9 @@ Agree with the Elastic owner who applies it. It holds:
 | OTLP to a collector, then to Elastic | one open protocol for network and app data; the collector adds the contract labels, batching and a disk queue; Elastic accepts OTLP natively | gnmic → Kafka → Logstash (more moving parts on one host); Prometheus remote-write |
 | State enums as numbers | one series per state, easy to threshold and alert on (`session_state < 6`, `oper_status == 0`) | string values, which become one series per state |
 | Drop unused ports at gnmic | about 60 % fewer interface series, and no "down" ports that were never cabled | filtering in Elastic |
-| Collector profiles (`local` / `elastic`) | the lab works without Elastic credentials; the credentials never enter git | one config with empty variables |
+| Collector profiles (`local` / `elastic` / `elastic-otlp`) | the lab works without Elastic credentials; the credentials never enter git; a Managed OTLP endpoint is a setting, not a code change | one config with empty variables |
+| EDOT Collector, writing straight to Elasticsearch | Elastic's supported distribution; the project has no Managed OTLP endpoint | `otelcol-contrib` |
+| Secrets as files read with `${file:…}` | not visible in `docker inspect` or the topology; a key change is a restart, not a redeploy | container environment variables |
+| Local debug tap on gnmic, not the collector | the EDOT Collector has no Prometheus exporter; the tap still works without Elastic | a second collector |
 | One gnmic, one collector | one host, one lab; a restart costs seconds of data | clustered gnmic with a locker, which isn't worth it here |
 | Plain gRPC, lab credentials | a closed lab network | TLS and service accounts on gNMI |

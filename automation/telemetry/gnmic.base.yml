@@ -1,4 +1,5 @@
-# gnmic collector (hand-maintained base): Arista cEOS OpenConfig paths -> OTLP -> otelcol.
+# gnmic collector (hand-maintained base): Arista cEOS OpenConfig paths -> OTLP -> otelcol (-> Elastic),
+# plus a Prometheus output on :9464 that is only a local debug tap (curl localhost:9464/metrics on the lab host).
 # automation/render.py adds a per-device "used-ports" filter and writes containerlab/telemetry/gnmic/gnmic.yml.
 # Credentials: GNMIC_USERNAME / GNMIC_PASSWORD env, set in netops.clab.yml from EOS_USER / EOS_PASSWORD (default admin).
 encoding: json_ietf
@@ -77,3 +78,10 @@ outputs:
     resource-attributes:
       service.name: gnmic
       deployment.environment: hackathon
+  prom:                          # local debug tap only; Elastic gets the OTLP output above
+    type: prometheus
+    listen: :9464
+    path: /metrics
+    metric-prefix: gnmi
+    strings-as-labels: true
+    event-processors: [states, numbers]

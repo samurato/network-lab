@@ -1,0 +1,46 @@
+# Data streams the lab writes.  The collector's elasticsearch exporter (OTel-native mapping) routes every
+# signal to <type>-<data_stream.dataset>.otel-<namespace>; base.yml sets the dataset per source.
+# Elasticsearch ships the templates for metrics-*.otel-* etc.; each lab dataset gets its own template that
+# reuses the built-in one as-is (read live, so an Elastic upgrade carries through) and adds a retention.
+locals {
+  metrics_datasets = {
+    gnmi = {
+      retention   = "7d"
+      description = "cEOS fabric telemetry from gnmic: interfaces, BGP, LLDP, platform"
+    }
+    otelcol = {
+      retention   = "3d"
+      description = "the lab collector's own metrics: accepted, refused, queued, failed"
+    }
+  }
+}
+
+data "elasticstack_elasticsearch_index_template" "otel_metrics" {
+  name = "metrics-otel@template"
+}
+
+resource "elasticstack_elasticsearch_index_template" "metrics" {
+  for_each = local.metrics_datasets
+
+  name                               = "metrics-${each.key}.otel"
+  index_patterns                     = ["metrics-${each.key}.otel-*"]
+  priority                           = data.elasticstack_elasticsearch_index_template.otel_metrics.priority + 30
+  composed_of                        = data.elasticstack_elasticsearch_index_template.otel_metrics.composed_of
+  ignore_missing_component_templates = data.elasticstack_elasticsearch_index_template.otel_metrics.ignore_missing_component_templates
+  allow_auto_create                  = true
+
+  data_stream {}
+
+  template {
+    settings = data.elasticstack_elasticsearch_index_template.otel_metrics.template.settings
+    mappings = data.elasticstack_elasticsearch_index_template.otel_metrics.template.mappings
+    lifecycle {
+      data_retention = each.value.retention
+    }
+  }
+
+  metadata = jsonencode({
+    description = each.value.description
+    managed_by  = "terraform: samurato/network-lab elastic/terraform"
+  })
+}

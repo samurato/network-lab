@@ -10,6 +10,10 @@
 #
 # Everything that changes the lab or reads it for a plan holds one host-wide lock, so CI jobs and people
 # never overlap (make plan/apply, automation/k8s plan/apply/destroy, and the commands above).
+#
+# Telemetry nodes (management-only, no fabric links) follow the bundle: the collector profile and the
+# Elastic secrets are written into it from the Elastic settings (automation/elastic-env.sh), and a
+# telemetry node whose files changed is restarted — safe for them, unlike for any node with links.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$(cd "$HERE/../containerlab" && pwd)       # bundle as built in this checkout
@@ -19,6 +23,8 @@ mkdir -p "$CLAB_LABDIR_BASE"
 BUNDLE=$CLAB_LABDIR_BASE/netops-bundle         # what the running lab is deployed from
 LOCK=$CLAB_LABDIR_BASE/.netops.lock
 EOS_USER=${EOS_USER:-admin}; EOS_PASSWORD=${EOS_PASSWORD:-admin}
+source "$HERE/elastic-env.sh"
+OTEL=$BUNDLE/telemetry/otelcol                 # collector config in the running bundle
 
 topo() { [[ -f $BUNDLE/netops.clab.yml ]] && echo "$BUNDLE/netops.clab.yml" || echo "$SRC/netops.clab.yml"; }
 mgmt_of() { yq -r ".topology.nodes.\"$1\".\"mgmt-ipv4\"" "$(topo)"; }
@@ -38,7 +44,35 @@ topology_pending() { ! cmp -s "$SRC/netops.clab.yml" "$BUNDLE/netops.clab.yml"; 
 
 copy_bundle() {   # in place, never unlink+create: a bind-mounted file must keep its inode
   mkdir -p "$BUNDLE"
-  rsync -rltp --inplace --delete --exclude '._*' "$@" "$SRC/" "$BUNDLE/"
+  rsync -rltp --inplace --delete --exclude '._*' \
+    --exclude /telemetry/otelcol/profile.yml --exclude /telemetry/otelcol/secrets/ "$@" "$SRC/" "$BUNDLE/"
+  collector_profile
+}
+
+collector_profile() {   # profile + secrets from the Elastic settings; secrets only in files the collector reads
+  local profile=local
+  if [[ -n ${ELASTIC_API_KEY:-} && -n ${ELASTIC_OTLP_ENDPOINT:-} ]]; then profile=elastic-otlp
+  elif [[ -n ${ELASTIC_API_KEY:-} && -n ${ELASTIC_ES_URL:-} ]]; then profile=elastic; fi
+  install -d -m 700 "$OTEL/secrets"
+  (umask 077
+   printf '%s' "${ELASTIC_ES_URL:-}" > "$OTEL/secrets/es_url"
+   printf '%s' "${ELASTIC_OTLP_ENDPOINT:-}" > "$OTEL/secrets/otlp_endpoint"
+   printf '%s' "${ELASTIC_API_KEY:-}" > "$OTEL/secrets/api_key")
+  cmp -s "$OTEL/$profile.yml" "$OTEL/profile.yml" 2>/dev/null || cat "$OTEL/$profile.yml" > "$OTEL/profile.yml"
+  echo "collector profile: $profile"
+}
+
+telemetry_digest() { [[ -d $BUNDLE/telemetry/$1 ]] || return 0
+  find "$BUNDLE/telemetry/$1" -type f -print0 | sort -z | xargs -0 -r sha256sum | sha256sum | cut -c1-16; }
+
+restart_changed_telemetry() {   # $@ = "node=digest-before" pairs
+  local pair n
+  for pair in "$@"; do
+    n=${pair%%=*}
+    [[ ${pair#*=} != "$(telemetry_digest "$n")" ]] || continue
+    [[ -n $(docker ps -q --filter "name=^clab-$LAB-$n\$") ]] || continue
+    docker restart "clab-$LAB-$n" >/dev/null && echo "restarted $n: its telemetry config changed (management-only node)"
+  done
 }
 
 sync_bundle() {
@@ -46,12 +80,15 @@ sync_bundle() {
     echo "WARNING: no lab bundle at $BUNDLE (lab deployed from elsewhere, or not at all): nothing synced;" \
          "'automation/lab redeploy' moves the lab onto it" >&2; return 0
   fi
+  local before=() n
+  for n in $(nodes_where '.value.labels.role=="telemetry"'); do before+=("$n=$(telemetry_digest "$n")"); done
   if topology_pending; then
     echo "WARNING: netops.clab.yml changed but the lab is not re-wired yet: run 'automation/lab redeploy'" >&2
     copy_bundle --exclude /netops.clab.yml --exclude /netops.clab.yml.annotations.json
   else
     copy_bundle
   fi
+  restart_changed_telemetry "${before[@]}"
   echo "lab bundle synced: $BUNDLE"
 }
 

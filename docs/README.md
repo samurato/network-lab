@@ -7,6 +7,7 @@
 | [Network engineer's guide](network-engineer-guide.md) | change VLANs, VRFs, routing, policy, switches, links or the WAN |
 | [Streaming telemetry](telemetry.md) | work with the gNMI → OTel → Elastic pipeline: what is collected, the data reference, ES\|QL, operating it, gaps and roadmap |
 | [Observability roadmap](observability-roadmap.md) | pick up the end-to-end observability build: step-by-step plan from network devices to Kubernetes, Cilium and the web app, with progress log |
+| [Elastic](elastic.md) | set up or operate the Elastic side: settings and keys, collector profiles, data streams, Terraform, ES\|QL checks |
 | [DevOps guide](devops-guide.md) | run the lab: host, build/deploy/destroy, CI/CD, Elastic export, traffic and faults, troubleshooting |
 | [Cilium](cilium.md) | work on the pod network: Helm values, packet paths, BGP to the leaves, VIP pools, Hubble, troubleshooting |
 | [Kubernetes guide](kubernetes-guide.md) | operate the cluster platform: nodes, Cilium, BGP, VIP pools, upgrades, failover drills |
