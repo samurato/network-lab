@@ -418,7 +418,7 @@ Collector changes (`containerlab/telemetry/otelcol/*.yml`) and Elastic setting c
 | `rpc error: code = InvalidArgument ... path invalid` | the subscription in the gnmic log | the path isn't in the switch's models; check with `capabilities` and `get` |
 | new subscription not showing | `docker logs clab-netops-gnmic` start-up lines | the running bundle is not updated: `make sync` (it restarts gnmic) |
 | series for unused ports | `containerlab/telemetry/gnmic/gnmic.yml` `used-ports` | the port isn't in the device's AVD interfaces; `make build` regenerates the filter |
-| nothing reaches Elastic | collector log; `collector profile:` line of `make sync` | profile is `local` (no key, or CI without the repository secrets); wrong key → `401` / `403` in the log. See [elastic.md § Operating it](elastic.md#8-operating-it) |
+| nothing reaches Elastic | collector log; `collector profile:` line of `make sync` | profile is `local` (no key, or CI without the repository secrets); wrong key → `401` / `403` in the log. See [elastic.md § Operating it](elastic.md#9-operating-it) |
 | `Stale file handle` from a telemetry container | `docker inspect` binds | the lab is running from the SMB checkout instead of the bundle; `make redeploy` |
 
 ---

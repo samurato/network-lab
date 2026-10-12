@@ -1,0 +1,180 @@
+# ES|QL behind every dashboard panel (elastic/terraform/dashboards.tf).  Each one was run against the live data.
+# Panels with ?_tstart / ?_tend follow the dashboard's time picker; "now" panels use a fixed short window.
+# Names: gNMI paths keep gnmic's hyphens, so they need backticks (`neighbor_neighbor-address`).
+# Counters in metrics-gnmi are TSDS counters: TS ... RATE() for rates, TO_DOUBLE() for MAX/MIN.
+
+# ---- Fabric health
+fab_switches: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes
+  | STATS switches = COUNT_DISTINCT(host.name)
+fab_bgp: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes
+    AND gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state IS NOT NULL
+  | STATS s = LAST(gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state, @timestamp)
+      BY host.name, `network-instance_name`, `neighbor_neighbor-address`
+  | STATS established = SUM(CASE(s == 6, 1, 0)), sessions = COUNT(*)
+fab_ports_down: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND gnmi_interfaces_interface_state_oper_status IS NOT NULL
+  | STATS up = LAST(gnmi_interfaces_interface_state_oper_status, @timestamp) BY host.name, interface_name
+  | STATS ports_down = SUM(CASE(up == 0, 1, 0)), ports = COUNT(*)
+fab_mbps: |
+  TS metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes
+  | STATS bps = SUM(RATE(gnmi_interfaces_interface_state_counters_in_octets)) * 8 BY host.name, interface_name
+  | STATS fabric_mbps = ROUND(SUM(bps) / 1000000, 2)
+fab_traffic_by_device: |
+  TS metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | STATS bps = SUM(RATE(gnmi_interfaces_interface_state_counters_in_octets)) * 8
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name
+  | EVAL mbps = ROUND(bps / 1000000, 2)
+  | KEEP time, host.name, mbps
+fab_bgp_prefixes: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+    AND gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_afi_safis_afi_safi_state_prefixes_received IS NOT NULL
+  | STATS received = MAX(gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_afi_safis_afi_safi_state_prefixes_received)
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name, `neighbor_neighbor-address`, `afi-safi_afi-safi-name`
+  | STATS prefixes = SUM(received) BY time, host.name
+fab_bgp_not_up: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes
+    AND gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state IS NOT NULL
+  | STATS state = LAST(gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state, @timestamp)
+      BY device = host.name, vrf = `network-instance_name`, peer = `neighbor_neighbor-address`
+  | WHERE state < 6
+  | EVAL fsm = CASE(state == 1, "IDLE", state == 2, "CONNECT", state == 3, "ACTIVE", state == 4, "OPENSENT", state == 5, "OPENCONFIRM", "UNKNOWN")
+  | KEEP device, vrf, peer, fsm
+  | SORT device
+fab_ports_down_tbl: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND gnmi_interfaces_interface_state_oper_status IS NOT NULL
+  | STATS up = LAST(gnmi_interfaces_interface_state_oper_status, @timestamp) BY device = host.name, interface = interface_name
+  | WHERE up == 0
+  | KEEP device, interface
+  | SORT device, interface
+fab_top_ports: |
+  TS metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 5 minutes
+  | STATS in_bps = SUM(RATE(gnmi_interfaces_interface_state_counters_in_octets)) * 8,
+          out_bps = SUM(RATE(gnmi_interfaces_interface_state_counters_out_octets)) * 8
+      BY device = host.name, interface = interface_name
+  | WHERE in_bps IS NOT NULL
+  | EVAL in_mbps = ROUND(in_bps / 1000000, 2), out_mbps = ROUND(out_bps / 1000000, 2)
+  | KEEP device, interface, in_mbps, out_mbps
+  | SORT in_mbps DESC
+  | LIMIT 15
+fab_errors: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | STATS in_err = MAX(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_errors)) - MIN(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_errors)),
+          out_err = MAX(TO_DOUBLE(gnmi_interfaces_interface_state_counters_out_errors)) - MIN(TO_DOUBLE(gnmi_interfaces_interface_state_counters_out_errors)),
+          in_disc = MAX(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_discards)) - MIN(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_discards)),
+          out_disc = MAX(TO_DOUBLE(gnmi_interfaces_interface_state_counters_out_discards)) - MIN(TO_DOUBLE(gnmi_interfaces_interface_state_counters_out_discards)),
+          flaps = MAX(TO_DOUBLE(gnmi_interfaces_interface_state_counters_carrier_transitions)) - MIN(TO_DOUBLE(gnmi_interfaces_interface_state_counters_carrier_transitions))
+      BY device = host.name, interface = interface_name
+  | WHERE in_err > 0 OR out_err > 0 OR in_disc > 0 OR out_disc > 0 OR flaps > 0
+  | KEEP device, interface, in_err, out_err, in_disc, out_disc, flaps
+  | SORT in_disc DESC
+  | LIMIT 25
+fab_lldp: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND gnmi_lldp_interfaces_interface_neighbors_neighbor_state_system_name IS NOT NULL
+  | STATS BY device = host.name, interface = interface_name, neighbour = value
+  | SORT device, interface
+
+# ---- Web app (traces from the web pods; kube-probe health checks excluded from user traffic)
+web_rpm: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp > NOW() - 5 minutes AND service.name == "web" AND kind == "Server" AND NOT http.user_agent LIKE "kube-probe*"
+  | STATS requests_per_min = ROUND(COUNT(*) / 5.0, 1)
+web_p95: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp > NOW() - 5 minutes AND service.name == "web" AND kind == "Server" AND NOT http.user_agent LIKE "kube-probe*"
+  | STATS p95_ms = ROUND(PERCENTILE(duration, 95) / 1000000, 1)
+web_err: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp > NOW() - 5 minutes AND service.name == "web" AND kind == "Server"
+  | STATS errors = SUM(CASE(http.status_code >= 500, 1, 0)), total = COUNT(*)
+  | EVAL error_pct = ROUND(100.0 * errors / total, 2)
+  | KEEP error_pct
+web_pods: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND service.name == "web"
+  | STATS pods = COUNT_DISTINCT(container.id)
+web_req_by_node: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*" AND k8s.node.name IS NOT NULL
+  | STATS requests = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+web_lat_by_route: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*"
+  | STATS p95_ms = PERCENTILE(duration, 95) / 1000000 BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), http.route
+web_routes: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+  | STATS requests = COUNT(*),
+          p50_ms = ROUND(PERCENTILE(duration, 50) / 1000000, 1),
+          p95_ms = ROUND(PERCENTILE(duration, 95) / 1000000, 1),
+          errors_5xx = SUM(CASE(http.status_code >= 500, 1, 0))
+      BY route = http.route, method = http.method
+  | KEEP route, method, requests, p50_ms, p95_ms, errors_5xx
+  | SORT requests DESC
+web_nodes: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*" AND k8s.node.name IS NOT NULL
+  | STATS requests = COUNT(*), p95_ms = ROUND(PERCENTILE(duration, 95) / 1000000, 1), pods = COUNT_DISTINCT(container.id)
+      BY node = k8s.node.name
+  | KEEP node, pods, requests, p95_ms
+  | SORT node
+
+# ---- Telemetry pipeline and changes
+pipe_docs_kpi: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 1 minute
+  | STATS docs_per_min = COUNT(*)
+pipe_stale_kpi: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 1 hour
+  | STATS last_seen = MAX(@timestamp) BY host.name
+  | STATS stale_switches = SUM(CASE(last_seen < NOW() - 60 seconds, 1, 0))
+pipe_queue_kpi: |
+  FROM metrics-otelcol.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND exporter == "elasticsearch/elastic" AND otelcol_exporter_queue_size IS NOT NULL
+  | STATS queue = LAST(otelcol_exporter_queue_size, @timestamp), capacity = LAST(otelcol_exporter_queue_capacity, @timestamp)
+pipe_changes_kpi: |
+  FROM logs-netops.changes-*
+  | WHERE @timestamp > NOW() - 24 hours
+  | STATS deploys_24h = COUNT(*)
+pipe_docs: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | STATS docs = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name
+pipe_sent: |
+  TS metrics-otelcol.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND exporter == "elasticsearch/elastic"
+  | STATS metric_points_per_s = SUM(RATE(otelcol_exporter_sent_metric_points)), spans_per_s = SUM(RATE(otelcol_exporter_sent_spans))
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend)
+pipe_queue: |
+  FROM metrics-otelcol.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND otelcol_exporter_queue_size IS NOT NULL
+    AND exporter == "elasticsearch/elastic"
+  | STATS queue = MAX(otelcol_exporter_queue_size) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend)
+pipe_last_seen: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 1 hour
+  | STATS last_seen = MAX(@timestamp) BY device = host.name
+  | EVAL age_s = DATE_DIFF("seconds", last_seen, NOW())
+  | KEEP device, last_seen, age_s
+  | SORT age_s DESC
+pipe_changes: |
+  FROM logs-netops.changes-*
+  | SORT @timestamp DESC
+  | KEEP @timestamp, git.message, git.author, event.outcome, netops.changed_devices, git.sha
+  | LIMIT 20

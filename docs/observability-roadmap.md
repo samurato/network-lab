@@ -35,7 +35,7 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 
 The Elastic project is **Serverless, Elasticsearch type** (no Managed OTLP endpoint, no Observability apps).
 The collector writes straight to Elasticsearch and is ready for a Managed OTLP endpoint
-([elastic.md § 9](elastic.md#9-moving-to-a-managed-otlp-endpoint-later)). Steps 14 and 16 need an
+([elastic.md § 10](elastic.md#10-moving-to-a-managed-otlp-endpoint-later)). Steps 14 and 16 need an
 Observability project for Synthetics and SLOs.
 
 ---
@@ -232,7 +232,9 @@ In `automation/telemetry/gnmic.base.yml`:
   - no data from a source in 60 seconds.
 - [ ] SLOs: web availability and latency.
 - [ ] ML anomaly detection jobs: interface errors and utilisation; trace latency.
-- [ ] Dashboards: fabric, WAN, k8s/Cilium, and an app → network drill-down.
+- [ ] Dashboards: fabric, WAN, k8s/Cilium, and an app → network drill-down. *Started early (2026-10-12): fabric,
+  web app and pipeline dashboards in `elastic/terraform/dashboards.tf`; WAN, k8s/Cilium and the drill-down come
+  with their data.*
 
 **Done when:** every fault drill below raises its alert.
 
@@ -257,4 +259,5 @@ In `automation/telemetry/gnmic.base.yml`:
 ## Progress log
 | Date | Step | PR | Notes |
 |---|---|---|---|
-| 2026-10-12 | 0–4 | `obs-p0-elastic-foundation` | EDOT Collector writing straight to Elasticsearch (Serverless Elasticsearch project, no Managed OTLP); profile `elastic-otlp` ready; `elastic/terraform`; verify via ES\|QL. Lab key and CI secrets still to be created by the owner |
+| 2026-10-12 | 16 (part) | `obs-dashboards` | Dashboards as code: Fabric health, Web app, Pipeline & changes (ES\|QL panels, `config_json` in the Kibana API shape) |
+| 2026-10-12 | 0–4 | #7, #8 | EDOT Collector writing straight to Elasticsearch (Serverless Elasticsearch project, no Managed OTLP); profile `elastic-otlp` ready; `elastic/terraform`; verify via ES\|QL. Lab key and CI secrets still to be created by the owner |
