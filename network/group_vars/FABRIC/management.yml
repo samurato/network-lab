@@ -1,4 +1,4 @@
-# MANAGEMENT (every switch): mgmt VRF, local users, eAPI, gNMI streaming telemetry
+# MANAGEMENT (every switch): mgmt VRF, local users, eAPI, gNMI streaming telemetry, clock, syslog
 
 # --- Management1 in VRF MGMT on the containerlab mgmt network (cEOS eth0 is remapped to Management1)
 mgmt_interface_settings:
@@ -14,6 +14,27 @@ aaa_settings:
       role: network-admin
       sha512_password: $6$1yhH1WS8WkcVeAPu$k56vaTChE1oj5UfsfHE79tAY7LNGwb7baQ9Zm7qzygUqGJIC40/uVsQHBoYfOjg7emTdLFo0OTdC77nRiv9Mn/
 
+# --- clock: the lab's one timezone. render.py gives every Linux node (WAN, hosts, k3s, telemetry) the same
+#     zone through /etc/localtime. Elastic stores UTC either way; this is what people read on the devices.
+timezone: Australia/Sydney
+
+# --- syslog to the lab collector (EDOT, 172.20.20.250) over the management VRF. RFC 5424 with high-resolution
+#     timestamps carries the UTC offset, so the receiver needs no timezone guessing.
+logging_settings:
+  hosts:
+    - name: 172.20.20.250
+      vrf: MGMT
+      protocol: udp
+      ports:
+        - 514
+  vrfs:
+    - name: MGMT
+      source_interface: Management1
+  trap: informational
+  format:
+    timestamp: high-resolution
+    rfc5424: true
+
 # --- eAPI: how Ansible pushes config
 management_eapi:
   enabled: true
@@ -26,7 +47,14 @@ custom_structured_configuration_management_api_gnmi:
       - name: default
         vrf: MGMT
 
-# --- cEOS-lab dataplane personality (not modelled by AVD; must survive config replace)
+# --- raw EOS CLI for what AVD does not model (must survive config replace):
+#     cEOS-lab dataplane personality; OpenConfig AFT route tables for gNMI
+#     (/network-instances/.../afts: per-VRF IPv4/IPv6 routes and next hops)
 custom_structured_configuration_eos_cli: |
   platform tfa
      personality arfa
+  !
+  management api models
+     provider aft
+        ipv4-unicast
+        ipv6-unicast

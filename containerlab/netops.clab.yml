@@ -12,6 +12,8 @@ topology:
         - static/ceos/interface_mapping.json:/mnt/flash/EosIntfMapping.json:ro
     linux:
       restart-policy: 'no'
+      binds:
+        - /usr/share/zoneinfo/Australia/Sydney:/etc/localtime:ro
   nodes:
     dc1-bgw1:
       kind: arista_ceos

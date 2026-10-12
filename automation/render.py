@@ -59,6 +59,11 @@ def dump(path: pathlib.Path, data, header: str = HEADER) -> None:
     path.write_text(header + yaml.dump(data, Dumper=BlockDumper, sort_keys=False, width=1000, allow_unicode=True))
 
 
+def lab_timezone() -> str:
+    """The lab's one timezone: AVD's `timezone` (clock on the switches), reused for every Linux node."""
+    return load(INTENT / "group_vars" / "FABRIC" / "management.yml").get("timezone", "Etc/UTC")
+
+
 def sync_file(src: pathlib.Path, dst: pathlib.Path) -> None:
     """Copy src to dst only if the content differs, rewriting in place.  The running lab bind-mounts these
     files; replacing (unlink + create) a file a container holds open on the SMB share deletes it."""
@@ -399,7 +404,9 @@ def post() -> None:
                                  "binds": ["static/ceos/interface_mapping.json:/mnt/flash/EosIntfMapping.json:ro"]},
                              # a Docker restart gives a container a fresh network namespace: its containerlab
                              # links are gone.  Only management-only nodes (telemetry) may restart.
-                             "linux": {"restart-policy": "no"}},
+                             # Clock: the switches' timezone (FABRIC/management.yml) for every Linux node too.
+                             "linux": {"restart-policy": "no",
+                                       "binds": [f"/usr/share/zoneinfo/{lab_timezone()}:/etc/localtime:ro"]}},
                          "nodes": nodes,
                          "links": [{"endpoints": [f"{a}:{ap}", f"{b}:{bp}"]} for (a, ap), (b, bp) in sorted(links)]}}
     dump(CLAB / "netops.clab.yml", topo, HEADER.replace("— do not edit", "— do not edit (deploy: containerlab deploy -t netops.clab.yml)"))

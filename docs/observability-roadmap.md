@@ -30,7 +30,8 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 | gnmic → EDOT Collector → Elastic: interface counters, oper-status, BGP state and prefixes, LLDP, CPU and memory, in `metrics-gnmi.otel-default` | Route tables (OpenConfig AFT), OSPF, EVPN/VXLAN, syslog, FRR WAN, hosts |
 | The `web` pods' traces, metrics and logs reach Elastic (`traces-generic.otel-default`) | Kubernetes, Cilium, Hubble |
 | `change-event.sh` writes ECS change events to `logs-netops.changes-default` | Context indices (topology, IP map, intent), alert rules, SLOs, dashboards |
-| `elastic/terraform/`: data stream templates, Kibana space `netops`, data views | Flows: cEOS was seen to send no sFlow samples, so this needs a test or host-side sampling |
+| `elastic/terraform/`: data stream templates, Kibana space `netops`, data views, dashboards | Flows: cEOS sFlow works (step 5 test on dc1-leaf1); no flow collector yet (step 10) |
+| Switches: OpenConfig route tables (AFT) on, clock Australia/Sydney, sFlow test on dc1-leaf1 | Switch syslog: configured, but rsyslog inside cEOS crash-loops on this host, so nothing is sent (step 7) |
 | `make verify` checks freshness in Elastic with ES\|QL | |
 
 The Elastic project is **Serverless, Elasticsearch type** (no Managed OTLP endpoint, no Observability apps).
@@ -107,16 +108,25 @@ Observability project for Synthetics and SLOs.
 ## Phase P1 – Network depth: routes, protocols, events
 
 ### Step 5 – Switch-side config (AVD)
-- [ ] `network/group_vars/FABRIC/management.yml`:
-  - enable the OpenConfig route-table models: `management api models` → `provider aft` with `ipv4-unicast` and `ipv6-unicast`, via `custom_structured_configuration_eos_cli` or the AVD key;
-  - `logging host 172.20.20.250` in VRF MGMT;
-  - sFlow: **test first on one leaf.** cEOS in containers was seen to send no sFlow samples
-    ([architecture.md § Known gaps](architecture.md#12-known-gaps)). Enable it (sample 1:100, destination
-    the goflow2 IP, source Management1) and check the sample counters in `show sflow`. Roll it out only if
-    samples appear; otherwise Step 10 uses host-side sampling.
-- [ ] `make build && make plan`: check the diff is only these lines, then merge. The deploy applies it.
+- [x] `network/group_vars/FABRIC/management.yml`:
+  - OpenConfig route tables: `management api models` → `provider aft` → `ipv4-unicast`, `ipv6-unicast`, in
+    `custom_structured_configuration_eos_cli` (AVD doesn't model it);
+  - syslog (`logging_settings`): `logging vrf MGMT host 172.20.20.250 514`, RFC 5424, high-resolution
+    timestamps, trap informational;
+  - `timezone: Australia/Sydney` (asked for 2026-10-12). `render.py` reuses it for every Linux node by
+    mounting `/usr/share/zoneinfo/Australia/Sydney` as `/etc/localtime`.
+- [x] sFlow test on dc1-leaf1 (`network/group_vars/DC1.yml`): sample 1:100, polling 30 s, to
+  `172.20.20.250:6343` in VRF MGMT. **Result: cEOS 4.36.2F does send sFlow.** Hardware samples count up in
+  `show sflow`, and sFlow v5 datagrams reach 172.20.20.250. The earlier "no samples" note is out of date;
+  Step 10 uses the switches.
+- [x] Checked on a redeployed lab from the branch: `make verify` 0 FAIL.
 
-**Done when:** `gnmic get --path '/network-instances/network-instance[name=default]/afts/ipv4-unicast'` returns routes.
+**Done when:** `gnmic get --path '/network-instances/network-instance[name=default]/afts/ipv4-unicast'` returns routes. ✔
+(dc1-leaf1: default VRF and VRF PROD both return entries.)
+
+**Found:** rsyslog inside cEOS crash-loops on this host (`rsyslog.service ... status=1/FAILURE`, thousands of
+restarts). A fresh cEOS with no logging config does the same, so it is not caused by this change; but no
+switch syslog reaches the collector. See Step 7.
 
 ### Step 6 – gnmic subscriptions
 In `automation/telemetry/gnmic.base.yml`:
@@ -137,6 +147,12 @@ In `automation/telemetry/gnmic.base.yml`:
 - [ ] Collector: add the `syslog` receiver (UDP 514) → `logs-syslog.otel-*`.
 - [ ] FRR (`wan1.conf`, `wan2.conf` render path): `log syslog`, forwarded to the collector.
 - [ ] Add a `frr_exporter` sidecar per WAN router, scraped by the collector's `prometheus` receiver → `metrics-frr.otel-*`.
+
+**Blocked for cEOS:** rsyslog crash-loops inside cEOS on this host (Step 5), so the switches send no syslog
+yet. FRR and Linux syslog are not affected. Until cEOS rsyslog is fixed, switch events come from gNMI on-change
+state (oper-status, BGP session state), which already reaches Elastic. The EDOT Collector has no `syslog`
+receiver: use `filebeatreceiver` with a `syslog` / `udp` input, and `location: Australia/Sydney` for
+RFC 3164 senders.
 
 **Done when:** `%BGP` and `%LINEPROTO` events from cEOS, and FRR BGP logs, appear in Elastic within 15 seconds.
 
@@ -169,8 +185,9 @@ In `automation/telemetry/gnmic.base.yml`:
 ## Phase P3 – Flows
 
 ### Step 10 – sFlow → goflow2 → Elastic
-- [ ] Sources: cEOS sFlow if Step 5's test showed samples. Otherwise sample on the lab host instead:
-  `hsflowd` or `pmacctd` watching the lab's veth links, which sees every hop without the switches' help.
+- [ ] Sources: cEOS sFlow (Step 5's test showed samples). Move the sFlow config from dc1-leaf1 to the fabric
+  (`sflow_settings` + `fabric_sflow`), pointed at goflow2. Host-side sampling (`hsflowd` / `pmacctd` on the veth
+  links) stays an option for the WAN and hosts.
 - [ ] `automation/render.py`: add a `goflow2` node on `clab-mgmt` with a fixed IP. It writes JSON to a bind-mounted file, which the collector reads with `filelog` into `logs-sflow.flows`.
 
 **Done when:** during `iperf3 -c iperf3-dc2`, the top talker in Elastic is the iperf pod IP, seen on every hop of the path.
@@ -259,5 +276,6 @@ In `automation/telemetry/gnmic.base.yml`:
 ## Progress log
 | Date | Step | PR | Notes |
 |---|---|---|---|
+| 2026-10-13 | 5 + timezone | `obs-p1-step5-time` | AFT on, syslog configured (blocked by cEOS rsyslog loop), sFlow works on cEOS (dc1-leaf1 test), Australia/Sydney on every device |
 | 2026-10-12 | 16 (part) | `obs-dashboards` | Dashboards as code: Fabric health, Web app, Pipeline & changes (ES\|QL panels, `config_json` in the Kibana API shape) |
 | 2026-10-12 | 0–4 | #7, #8 | EDOT Collector writing straight to Elasticsearch (Serverless Elasticsearch project, no Managed OTLP); profile `elastic-otlp` ready; `elastic/terraform`; verify via ES\|QL. Lab key and CI secrets still to be created by the owner |

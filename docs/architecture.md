@@ -353,6 +353,9 @@ flowchart LR
 - **Export to Elastic** happens when the Elastic settings are present (`automation/elastic.env` on the host,
   repository secrets in CI). `automation/lab` then gives the collector the `elastic` profile on every bundle
   copy; see the [Elastic guide](elastic.md). The Elastic side itself is Terraform in `elastic/terraform/`.
+- **Clock:** every device runs Australia/Sydney (AEST / AEDT): `timezone` in `network/group_vars/FABRIC/management.yml`
+  for the switches, and the same zone mounted as `/etc/localtime` into every Linux node by `render.py`. Elastic
+  stores UTC; Kibana shows the viewer's browser time.
 - **Change events:** every deploy records one (commit, author, changed devices, outcome) to
   `~/netops-changes.jsonl` and, when configured, to Elastic `logs-netops.changes`. The agent can then line
   up "what changed" with "when symptoms started".
@@ -474,7 +477,8 @@ collector back as `local` and change events stay in `~/netops-changes.jsonl`).
 | Elastic project has no Managed OTLP endpoint and no Observability apps | collector writes straight to Elasticsearch; no APM UI, SLOs or Synthetics | an Observability project; the collector's `elastic-otlp` profile is ready ([Elastic guide](elastic.md#10-moving-to-a-managed-otlp-endpoint-later)) |
 | No routing-table telemetry | OpenConfig AFT and BGP RIB paths return empty (only `provider eos-native` is enabled) | enable `provider aft`: [roadmap](observability-roadmap.md) steps 5–6 |
 | No Kubernetes, Cilium or Hubble telemetry | node, pod and Cilium health not visible | [roadmap](observability-roadmap.md) steps 11–12 |
-| No flow data (cEOS sends no sFlow samples) | no per-flow reachability analysis yet | host-side sampling (pmacctd / hsflowd) → Elastic: [roadmap](observability-roadmap.md) step 10 |
+| No flow data in Elastic | no per-flow reachability analysis yet. cEOS sFlow works (tested on dc1-leaf1) but nothing collects it | goflow2 → Elastic: [roadmap](observability-roadmap.md) step 10 |
+| No syslog from the switches | rsyslog crash-loops inside cEOS on this host (also on a fresh cEOS without logging config); switch events only via gNMI state | find the cEOS rsyslog cause: [roadmap](observability-roadmap.md) step 7 |
 | No synthetic ping-mesh | reachability only via `make verify` | `icmp_check` probes → OTLP (designed, not built) |
 | WAN routers hash ECMP on L3 only | one client (k6) always lands in the same DC | `net.ipv4.fib_multipath_hash_policy=1` on wan1/wan2 |
 | Occasional VIP request timeouts were seen once | not reproduced on re-test (40/40 OK) | watch `make verify`; investigate if it recurs |

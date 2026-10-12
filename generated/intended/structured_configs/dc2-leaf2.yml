@@ -8,10 +8,12 @@ as_path:
       match: ^$
     - type: permit
       match: ^65201$
+clock:
+  timezone: Australia/Sydney
 config_end: true
 enable_password:
   disabled: true
-eos_cli: "platform tfa\n   personality arfa\n"
+eos_cli: "platform tfa\n   personality arfa\n!\nmanagement api models\n   provider aft\n      ipv4-unicast\n      ipv6-unicast\n"
 ethernet_interfaces:
 - name: Ethernet1
   description: P2P_dc2-spine1_Ethernet2
@@ -90,6 +92,19 @@ local_users:
   privilege: 15
   role: network-admin
   sha512_password: $6$1yhH1WS8WkcVeAPu$k56vaTChE1oj5UfsfHE79tAY7LNGwb7baQ9Zm7qzygUqGJIC40/uVsQHBoYfOjg7emTdLFo0OTdC77nRiv9Mn/
+logging:
+  trap: informational
+  format:
+    timestamp: high-resolution
+    rfc5424: true
+  vrfs:
+  - name: MGMT
+    source_interface: Management1
+    hosts:
+    - name: 172.20.20.250
+      protocol: udp
+      ports:
+      - 514
 loopback_interfaces:
 - name: Loopback0
   description: ROUTER_ID
