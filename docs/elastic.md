@@ -251,6 +251,8 @@ FROM logs-netops.changes-default
 | `403 ... action [indices:data/write/bulk...] is unauthorized` | collector log | the lab key lacks a privilege; recreate it from `automation/elastic role` |
 | CI deploy turns Elastic off | `collector profile: local` in the deploy log | the repository secrets are not set: `automation/elastic gh-secrets` |
 | `metrics-gnmi` shows up as a regular (not time series) data stream | `GET _data_stream/metrics-gnmi.otel-default` | the template was created after the data stream: roll it over with `POST metrics-gnmi.otel-default/_rollover` |
+| collector log: `validation errors ... dropping cumulative temporality histogram` | | a histogram reached the exporter as cumulative; `cumulative_to_delta/histograms` in `base.yml` must stay in the metrics pipeline |
+| collector log: `metric with name ... has already been serialized in document with timestamp` | gnmic timestamps | the same series sent twice with one timestamp; gnmic's `now` processor (`event-override-ts`, precision `ns`) prevents it. `ms` precision would put the data in 1970 |
 | Terraform: `creating derived api keys requires an explicit role descriptor that is empty` | | expected: API keys can't create keys with privileges. Create the lab key in Kibana |
 
 ---

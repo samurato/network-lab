@@ -30,6 +30,10 @@ processors:
     check_interval: 1s
     limit_percentage: 80
     spike_limit_percentage: 20
+  cumulative_to_delta/histograms:  # Elasticsearch takes delta histograms only (the web app's SDK sends cumulative)
+    include:
+      metric_types:
+        - histogram
   transform/contract:            # data contract: every signal carries host.name (+ device) and lab
     metric_statements:
       - context: resource
@@ -71,6 +75,7 @@ service:
         - prometheus/self
       processors:
         - memory_limiter
+        - cumulative_to_delta/histograms
         - transform/contract
       exporters:
         - debug

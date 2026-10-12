@@ -41,6 +41,11 @@ subscriptions:
     stream-mode: on-change
 
 processors:
+  # cEOS keeps the device timestamp of a value that has not changed, so an idle counter would be re-sent with the
+  # same old timestamp every sample (Elastic drops it as a duplicate, and it looks stale). Stamp collection time.
+  now:
+    event-override-ts:
+      precision: ns              # OTLP timestamps are nanoseconds; "ms" would land the data in 1970
   # OpenConfig enums -> numbers so each state is ONE time series the agent can threshold on.
   #   oper-status: UP=1, anything else=0      session-state: BGP FSM IDLE=1 .. ESTABLISHED=6
   states:
@@ -74,7 +79,7 @@ outputs:
     resource-tag-keys: [source, site, role, vendor]
     counter-patterns:
       - "octets|pkts|packets|errors|discards|drops|messages"
-    event-processors: [states, numbers]
+    event-processors: [now, states, numbers]
     resource-attributes:
       service.name: gnmic
       deployment.environment: hackathon
@@ -84,4 +89,4 @@ outputs:
     path: /metrics
     metric-prefix: gnmi
     strings-as-labels: true
-    event-processors: [states, numbers]
+    event-processors: [now, states, numbers]

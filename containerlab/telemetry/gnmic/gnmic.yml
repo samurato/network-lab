@@ -36,6 +36,9 @@ subscriptions:
       - /lldp/interfaces/interface/neighbors/neighbor/state/port-id
     stream-mode: on-change
 processors:
+  now:
+    event-override-ts:
+      precision: ns
   states:
     event-starlark:
       source: |
@@ -92,6 +95,7 @@ outputs:
       - octets|pkts|packets|errors|discards|drops|messages
     event-processors:
       - used-ports
+      - now
       - states
       - numbers
     resource-attributes:
@@ -105,5 +109,6 @@ outputs:
     strings-as-labels: true
     event-processors:
       - used-ports
+      - now
       - states
       - numbers
