@@ -159,6 +159,7 @@ One gnmic container holds a long-lived subscription to every target. The target 
 | Processor | Type | Does |
 |---|---|---|
 | `used-ports` | `event-drop` (generated) | drops interface events for ports the device doesn't use |
+| `now` | `event-override-ts` (ns) | stamps the collection time. cEOS keeps the device timestamp of an unchanged value, so idle counters would be re-sent with an old timestamp (Elastic drops them as duplicates, and they look stale) |
 | `states` | `event-starlark` | `oper-status`: `UP` → 1, anything else → 0. `session-state`: `IDLE` 1, `CONNECT` 2, `ACTIVE` 3, `OPENSENT` 4, `OPENCONFIRM` 5, `ESTABLISHED` 6. Each state is then one numeric series that can be thresholded |
 | `numbers` | `event-convert` | every remaining value → float |
 
@@ -215,7 +216,7 @@ time it copies the bundle, and restarts the collector when they change. Details 
 
 ```
 receivers:  otlp (gRPC 0.0.0.0:4317, HTTP 0.0.0.0:4318), prometheus/self (the collector's own metrics)
-metrics:    otlp, prometheus/self -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
+metrics:    otlp, prometheus/self -> memory_limiter -> cumulative_to_delta/histograms -> transform/contract -> debug [, elasticsearch/elastic]
 traces:     otlp                  -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
 logs:       otlp                  -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
 ```
@@ -225,6 +226,8 @@ logs:       otlp                  -> memory_limiter -> transform/contract -> deb
     gnmic and `otelcol` for the collector's own metrics;
   - on traces and logs: `lab` = `netops`.
 - **`memory_limiter`** refuses data before the collector runs out of memory.
+- **`cumulative_to_delta/histograms`** turns cumulative histograms (the web app's HTTP durations) into delta
+  ones: Elasticsearch accepts only delta histograms and the exporter would drop them otherwise.
 - **`prometheus/self`** scrapes the collector's own metrics from `127.0.0.1:8888`: points accepted, refused,
   sent and failed, and the queue size.
 - **`debug`** (verbosity `basic`) logs one line per batch to the container log.
