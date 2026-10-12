@@ -43,7 +43,7 @@ On a shared lab, prefer: branch → PR → let CI post the plan → merge, inste
 | BGW ↔ WAN eBGP neighbors (underlay) | `structured_config.router_bgp` of each BGW in `DC1.yml` / `DC2.yml` |
 | Route policy: what k8s nodes may announce, what goes to / comes from the WAN | `structured_config` under `l3leaf.defaults` in `DC1.yml` / `DC2.yml` (`PL-*`, `RM-*`, `AS-*-LOCAL`) |
 | BGW ↔ WAN links and their IPs | `network/group_vars/FABRIC/cabling.yml` (`l3_edge`) |
-| Management VRF, users, eAPI, gNMI | `network/group_vars/FABRIC/management.yml` |
+| Management VRF, users, eAPI, gNMI, OpenConfig route tables, syslog, clock (timezone for the whole lab) | `network/group_vars/FABRIC/management.yml` |
 | Servers (which leaf port, VLAN, IP) | `network/hosts.yml` |
 | WAN routers, VRF PROD handoff, edge sites (Internet users, attacker) | `network/wan.yml` |
 | Kubernetes node ↔ leaf links, node AS numbers | `kubernetes/cluster.yml` |

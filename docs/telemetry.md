@@ -135,6 +135,19 @@ management api gnmi
 Check it on a switch: `automation/lab cli dc1-leaf1`, then `show management api gnmi`. It should say
 `Server: running on port 6030, in MGMT VRF` and `Octa: enabled`. Octa is the eos-native provider.
 
+Also from `management.yml`, on every switch:
+
+| Config | Why | EOS |
+|---|---|---|
+| OpenConfig route tables (`custom_structured_configuration_eos_cli`, AVD doesn't model it) | fills `/network-instances/network-instance/afts`: per-VRF IPv4/IPv6 routes with their next hops, for path walks | `management api models` → `provider aft` → `ipv4-unicast`, `ipv6-unicast` |
+| Syslog (`logging_settings`) | events (link, BGP, config) to the lab collector over VRF `MGMT`; RFC 5424 with high-resolution timestamps carries the UTC offset. **Nothing is sent yet**: rsyslog crash-loops inside cEOS on this host (see [Known gaps](#9-known-gaps)) | `logging vrf MGMT host 172.20.20.250 514`, `logging format rfc5424`, `logging format timestamp high-resolution`, `logging trap informational` |
+| Clock (`timezone`) | the lab runs Australia/Sydney (AEST / AEDT) on every device; Elastic stores UTC regardless | `clock timezone Australia/Sydney` |
+
+**sFlow test (dc1-leaf1 only).** `network/group_vars/DC1.yml` gives dc1-leaf1 `sflow sample 100`,
+`polling-interval 30`, destination `172.20.20.250:6343` in VRF `MGMT`. It answers one question: does cEOS in a
+container send samples at all? **Yes:** hardware samples count up in `show sflow`, and sFlow v5 datagrams reach
+172.20.20.250:6343. Nothing collects them yet ([roadmap step 10](observability-roadmap.md#step-10--sflow--goflow2--elastic)).
+
 ---
 
 ## 4. gnmic: the collector
@@ -458,9 +471,10 @@ Checked against the live lab. The paths marked ✗ were tried on `dc1-leaf1` / `
 | EVPN / VXLAN | OpenConfig `arista-vxlan` gives config only; MAC tables via `eos_native:/Smash/bridging/status/smashFdbStatus` work |
 | BFD sessions | model present, empty (BFD not configured) |
 | Queue drops | model present, empty on cEOS ✗ |
-| Syslog | no `logging host` configured on any device |
-| Routing table (OpenConfig AFT), BGP RIB | empty: needs `management api models` → `provider aft` on the switches. Arista native `eos_native:/Smash/routing/status/route` works, but routes point to FEC IDs |
-| Flows (sFlow / IPFIX) | not configured (cEOS was seen to send no sFlow samples; IPFIX unproven) |
+| Syslog | configured on every switch, but rsyslog inside cEOS crash-loops on this host (`systemctl status rsyslog`: `status=1/FAILURE`, restarting every few seconds); a fresh cEOS with no logging config does the same. No switch syslog is sent. No collector receiver yet either |
+| Routing table (OpenConfig AFT) | **available** since `provider aft` (step 5): `/network-instances/network-instance[name=…]/afts/ipv4-unicast` returns per-VRF routes. Not subscribed yet (step 6) |
+| BGP RIB | still empty under OpenConfig; Arista native paths work |
+| Flows (sFlow / IPFIX) | cEOS sFlow **works** (test on dc1-leaf1, step 5); no collector yet (step 10). IPFIX unproven |
 | Hosts and Kubernetes nodes (network) | not collected |
 
 ---

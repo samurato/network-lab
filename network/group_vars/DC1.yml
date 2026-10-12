@@ -108,6 +108,17 @@ l3leaf:
       mgmt_ip: 172.20.20.13/24
       filter:
         tags: [web]
+      structured_config:          # sFlow TEST (observability roadmap step 5): does cEOS send samples at all?
+        sflow:                    # check `show sflow`; fabric-wide only if samples appear (step 10)
+          sample: 100
+          polling_interval: 30
+          vrfs:
+            - name: MGMT
+              destinations:
+                - destination: 172.20.20.250
+                  port: 6343
+              source_interface: Management1
+          run: true
     - name: dc1-leaf2
       id: 2
       mgmt_ip: 172.20.20.14/24

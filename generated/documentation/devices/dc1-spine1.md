@@ -4,11 +4,14 @@
 
 - [Management](#management)
   - [Management Interfaces](#management-interfaces)
+  - [Clock Settings](#clock-settings)
   - [Management API gNMI](#management-api-gnmi)
   - [Management API HTTP](#management-api-http)
 - [Authentication](#authentication)
   - [Local Users](#local-users)
   - [Enable Password](#enable-password)
+- [Monitoring](#monitoring)
+  - [Logging](#logging)
 - [Spanning Tree](#spanning-tree)
   - [Spanning Tree Summary](#spanning-tree-summary)
   - [Spanning Tree Device Configuration](#spanning-tree-device-configuration)
@@ -59,6 +62,19 @@ interface Management1
    no shutdown
    vrf MGMT
    ip address 172.20.20.11/24
+```
+
+### Clock Settings
+
+#### Clock Timezone Settings
+
+Clock Timezone is set to **Australia/Sydney**.
+
+#### Clock Device Configuration
+
+```eos
+!
+clock timezone Australia/Sydney
 ```
 
 ### Management API gNMI
@@ -127,6 +143,42 @@ username admin privilege 15 role network-admin secret sha512 <removed>
 ### Enable Password
 
 Enable password has been disabled
+
+## Monitoring
+
+### Logging
+
+#### Logging Servers and Features Summary
+
+| Type | Level |
+| ---- | ----- |
+| Trap | informational |
+
+| Format Type | Setting |
+| ----------- | ------- |
+| Timestamp | high-resolution |
+| Hostname | hostname |
+| Sequence-numbers | false |
+| RFC5424 | True |
+
+| VRF | Source Interface |
+| --- | ---------------- |
+| MGMT | Management1 |
+
+| VRF | Hosts | Ports | Protocol | SSL-profile |
+| --- | ----- | ----- | -------- | ----------- |
+| MGMT | 172.20.20.250 | 514 | UDP | - |
+
+#### Logging Servers and Features Device Configuration
+
+```eos
+!
+logging trap informational
+logging vrf MGMT host 172.20.20.250 514
+logging format timestamp high-resolution
+logging format rfc5424
+logging vrf MGMT source-interface Management1
+```
 
 ## Spanning Tree
 
@@ -482,5 +534,10 @@ vrf instance MGMT
 !
 platform tfa
    personality arfa
+!
+management api models
+   provider aft
+      ipv4-unicast
+      ipv6-unicast
 
 ```
