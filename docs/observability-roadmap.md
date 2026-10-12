@@ -23,7 +23,7 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 
 ---
 
-## Where we are (2026-10-12)
+## Where we are (2026-10-13)
 
 | Works | Missing |
 |---|---|
@@ -33,6 +33,11 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 | `elastic/terraform/`: data stream templates, Kibana space `netops`, data views, dashboards | Flows: cEOS sFlow works (step 5 test on dc1-leaf1); no flow collector yet (step 10) |
 | Switches: OpenConfig route tables (AFT) on, clock Australia/Sydney, sFlow test on dc1-leaf1 | Switch syslog: configured, but rsyslog inside cEOS crash-loops on this host, so nothing is sent (step 7) |
 | `make verify` checks freshness in Elastic with ES\|QL | |
+
+**Lab status:** shut down on 2026-10-13 after the PR #10 deploy was verified (switch clocks Australia/Sydney,
+Linux nodes and collector on AEDT, AFT routes over gNMI, `make verify` 0 FAIL). While it is down nothing is sent
+to Elastic; the dashboards, data streams and Terraform state stay. Bring it back with `make up` (about 15 minutes)
+or by merging to `main` (the CI deploy rebuilds it). **Next: Step 6** (gnmic subscriptions).
 
 The Elastic project is **Serverless, Elasticsearch type** (no Managed OTLP endpoint, no Observability apps).
 The collector writes straight to Elasticsearch and is ready for a Managed OTLP endpoint
@@ -47,9 +52,9 @@ Observability project for Synthetics and SLOs.
   endpoints; an admin API key.
 - [x] Put them in the git-ignored `automation/elastic.env` on the host (`ELASTIC_ES_URL`, `ELASTIC_KIBANA_URL`,
   `ELASTIC_TF_API_KEY`). See [elastic.md § First-time setup](elastic.md#3-first-time-setup).
-- [ ] Create the restricted lab key (`automation/elastic role`, then Kibana → API keys) and put it in
+- [x] Create the restricted lab key (`automation/elastic role`, then Kibana → API keys) and put it in
   `ELASTIC_API_KEY`.
-- [ ] Copy the CI settings into the repository secrets (owner): `automation/elastic gh-secrets`.
+- [x] Copy the CI settings into the repository secrets (owner): `automation/elastic gh-secrets`.
 - [x] Start every step from the latest `main` on a new branch:
   ```sh
   git switch main && git pull && git switch -c <branch>
@@ -276,6 +281,7 @@ RFC 3164 senders.
 ## Progress log
 | Date | Step | PR | Notes |
 |---|---|---|---|
-| 2026-10-13 | 5 + timezone | `obs-p1-step5-time` | AFT on, syslog configured (blocked by cEOS rsyslog loop), sFlow works on cEOS (dc1-leaf1 test), Australia/Sydney on every device |
-| 2026-10-12 | 16 (part) | `obs-dashboards` | Dashboards as code: Fabric health, Web app, Pipeline & changes (ES\|QL panels, `config_json` in the Kibana API shape) |
-| 2026-10-12 | 0–4 | #7, #8 | EDOT Collector writing straight to Elasticsearch (Serverless Elasticsearch project, no Managed OTLP); profile `elastic-otlp` ready; `elastic/terraform`; verify via ES\|QL. Lab key and CI secrets still to be created by the owner |
+| 2026-10-13 | – | – | Lab shut down. Next: Step 6. Open: cEOS rsyslog crash loop (step 7), leftover `metrics-prometheusreceiver.otel-default` data stream from the first test |
+| 2026-10-13 | 5 + timezone | #10 | AFT on, syslog configured (blocked by cEOS rsyslog loop), sFlow works on cEOS (dc1-leaf1 test), Australia/Sydney on every device. CI deploy verified: topology redeploy, collector profile `elastic`, change event in Elastic, `make verify` 0 FAIL |
+| 2026-10-12 | 16 (part) | #9 | Dashboards as code: Fabric health, Web app, Pipeline & changes (ES\|QL panels, `config_json` in the Kibana API shape) |
+| 2026-10-12 | 0–4 | #7, #8 | EDOT Collector writing straight to Elasticsearch (Serverless Elasticsearch project, no Managed OTLP); profile `elastic-otlp` ready; `elastic/terraform`; verify via ES\|QL. Lab key (`netops-lab`) and CI secrets created by the owner the same day |
