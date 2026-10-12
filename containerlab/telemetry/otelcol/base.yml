@@ -1,4 +1,14 @@
-# OTel Collector gateway (lab side). Elastic export is layered on by elastic.yml.
+# OTel Collector gateway (lab side): the Elastic Distribution of OpenTelemetry (EDOT) Collector.
+# automation/lab layers ONE profile on top as profile.yml (see docs/elastic.md § Collector profiles):
+#   local         nothing leaves the lab (default; also what a plain `containerlab deploy` runs)
+#   elastic       elasticsearch exporter straight to ELASTIC_ES_URL (what runs today)
+#   elastic-otlp  OTLP to an Elastic Managed OTLP endpoint (ELASTIC_OTLP_ENDPOINT; ready for later)
+# Every signal gets the data contract (host.name, device, lab) and a data_stream.dataset, so in Elastic
+# it lands in <type>-<dataset>.otel-default: metrics-gnmi.otel-default, metrics-otelcol.otel-default, ...
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
 receivers:
   otlp:
     protocols:
@@ -6,32 +16,77 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
+  prometheus/self:               # the collector's own metrics (queue size, refused / failed sends)
+    config:
+      scrape_configs:
+        - job_name: otelcol
+          scrape_interval: 30s
+          static_configs:
+            - targets:
+                - 127.0.0.1:8888
 
 processors:
-  batch:
-  transform/contract:            # data contract: every signal carries device + lab
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  transform/contract:            # data contract: every signal carries host.name (+ device) and lab
     metric_statements:
       - context: resource
         statements:
+          - set(attributes["host.name"], attributes["source"]) where attributes["source"] != nil
           - set(attributes["device"], attributes["source"]) where attributes["source"] != nil
+          - set(attributes["lab"], "netops")
+          - set(attributes["data_stream.dataset"], "gnmi") where attributes["service.name"] == "gnmic"
+          - set(attributes["data_stream.dataset"], "otelcol") where attributes["service.name"] == "elastic-otel-collector"
+    trace_statements:
+      - context: resource
+        statements:
+          - set(attributes["lab"], "netops")
+    log_statements:
+      - context: resource
+        statements:
           - set(attributes["lab"], "netops")
 
 exporters:
   debug:
     verbosity: basic
-  prometheus:                    # local sanity check: curl localhost:9464/metrics
-    endpoint: 0.0.0.0:9464
-    resource_to_telemetry_conversion:
-      enabled: true
 
 service:
+  extensions:
+    - health_check
+  telemetry:
+    metrics:
+      level: normal
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: 8888
   pipelines:
     metrics:
       receivers:
         - otlp
+        - prometheus/self
       processors:
+        - memory_limiter
         - transform/contract
-        - batch
       exporters:
         - debug
-        - prometheus
+    traces:                      # web pods (kubernetes/terraform/apps.tf) send OTLP traces here
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - transform/contract
+      exporters:
+        - debug
+    logs:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - transform/contract
+      exporters:
+        - debug

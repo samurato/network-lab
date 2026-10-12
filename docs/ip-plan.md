@@ -94,8 +94,8 @@ BGW ↔ WAN links in detail (underlay; VRF PROD uses the same last octet in `10.
 | .21–.26 | DC2: spine1, spine2, leaf1, leaf2, bgw1, bgw2 |
 | .41 / .42 | wan1 / wan2 |
 | .61–.66 | Kubernetes nodes (table above); API server `https://172.20.20.61:6443` |
-| .250 | OTel Collector (OTLP 4317 gRPC / 4318 HTTP; host port 9464 = metrics) |
-| .251 | gnmic |
+| .250 | EDOT Collector (OTLP 4317 gRPC / 4318 HTTP) |
+| .251 | gnmic (host port 9464 = Prometheus debug tap) |
 
 ## Load-balancer VIP registry
 

@@ -1,0 +1,6 @@
+# Profile `local` (default): telemetry stays in the lab, nothing is exported.
+# automation/lab copies this to profile.yml when no Elastic settings are present.
+service:
+  telemetry:
+    logs:
+      level: info

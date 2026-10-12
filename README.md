@@ -34,7 +34,7 @@ Each layer has its own detailed diagrams in [docs/architecture.md](docs/architec
 | **Compute** | 6 k3s nodes, each on a routed /31 to a leaf; 3 control-plane nodes (DC1, DC2, WAN tie-breaker) | `kubernetes/cluster.yml` → `render.py` → containerlab |
 | **Platform and apps** | Cilium (native routing, BGP to the leaves, load-balancer VIPs), the web app 2 + 2 across the DCs, iperf3 servers | `kubernetes/terraform/` → Terraform |
 | **Traffic** | k6 users and a rate-capped attacker behind the WAN, link faults with netem | `network/wan.yml` |
-| **Observability** | gNMI from every switch → OTel Collector (Elastic export ready, endpoint not configured yet), plus a change event per deploy | `automation/telemetry/`, `containerlab/telemetry/` |
+| **Observability** | gNMI from every switch and the web app's traces → EDOT Collector → Elastic, plus a change event per deploy; the Elastic side is Terraform | `automation/telemetry/`, `containerlab/telemetry/`, `elastic/terraform/` |
 
 The web app answers on **192.0.2.10** (public, from the WAN) and **10.99.0.10** (inside the DCs).
 
@@ -47,6 +47,7 @@ The web app answers on **192.0.2.10** (public, from the WAN) and **10.99.0.10** 
 | [Network engineer's guide](docs/network-engineer-guide.md) | changing the fabric, routing and policy safely |
 | [Streaming telemetry](docs/telemetry.md) | the gNMI → OTel Collector → Elastic pipeline, its data and its roadmap |
 | [Observability roadmap](docs/observability-roadmap.md) | the step-by-step plan for end-to-end observability (network → Kubernetes → Cilium → app) |
+| [Elastic](docs/elastic.md) | the Elastic project: settings and keys, collector profiles, data streams, `elastic/terraform` |
 | [DevOps guide](docs/devops-guide.md) | running the lab, CI/CD, Elastic export, traffic and faults, troubleshooting |
 | [Cilium](docs/cilium.md) | the pod network: native routing, BGP to the leaves, VIPs, Hubble, troubleshooting |
 | [Kubernetes guide](docs/kubernetes-guide.md) | operating the cluster: nodes, Cilium, BGP, VIP pools, upgrades |
@@ -63,6 +64,7 @@ docs/           design and guides
 generated/      build output: EOS configs, fabric docs, Ansible inventory, Terraform input. Never edit.
 containerlab/   build output: the deployable lab bundle (topology, startup configs, telemetry). Never edit
                 except static/ and telemetry/otelcol/.
+elastic/        YOU EDIT: everything inside the Elastic project (terraform/: templates, space, data views)
 automation/     tooling: render.py, Ansible playbooks/roles, lab + k8s helpers, verify.sh, CI scripts
 .github/        workflows (plan, deploy, drift) and CODEOWNERS
 Makefile        every command (make help)
@@ -89,7 +91,8 @@ make down        # destroy
 | `automation/k8s kubectl …` | kubectl against the cluster |
 
 Credentials: `EOS_USER` / `EOS_PASSWORD` (lab default admin/admin), `K3S_TOKEN` (default `netops-lab`).
-Elastic: `automation/elastic.env` (git-ignored, see `elastic.env.example`).
+Elastic: `automation/elastic.env` (git-ignored, see `elastic.env.example` and [docs/elastic.md](docs/elastic.md)).
+`make elastic` applies `elastic/terraform/`.
 
 ## Making a change
 

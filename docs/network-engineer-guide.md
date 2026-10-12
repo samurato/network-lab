@@ -107,7 +107,7 @@ the Terraform input. See the [Kubernetes guide](kubernetes-guide.md#add-or-move-
 | Readable docs per switch | `generated/documentation/devices/<switch>.md` |
 | Fabric-wide tables (all links and IPs) | `generated/documentation/fabric/FABRIC-documentation.md` |
 | Diagram | VS Code → Containerlab extension → TopoViewer on `containerlab/netops.clab.yml`, or `make graph` |
-| Live telemetry | `curl -s localhost:9464/metrics \| grep gnmi_` on the lab host (or Elastic) |
+| Live telemetry | Elastic: Kibana space **NetOps lab**, data view *Fabric telemetry (gnmic)*; or `curl -s localhost:9464/metrics \| grep gnmi_` on the lab host |
 
 Useful show commands:
 

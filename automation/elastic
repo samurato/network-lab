@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Elastic as code: Terraform for everything inside the Elastic project (elastic/terraform/).
+#   automation/elastic plan | apply | role | gh-secrets | output [name]
+#     role        print the lab API key's role descriptor (paste it in Kibana -> API keys; docs/elastic.md)
+#     gh-secrets  copy ELASTIC_ES_URL / ELASTIC_OTLP_ENDPOINT / ELASTIC_API_KEY into the repository secrets (CI)
+# Needs ELASTIC_ES_URL, ELASTIC_KIBANA_URL and the admin ELASTIC_TF_API_KEY (automation/elastic.env).
+# The state outlives the lab (Elastic does too): ~/.local/share/netops/terraform-elastic.tfstate.
+set -euo pipefail
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+source "$ROOT/automation/elastic-env.sh"
+export PATH="$HOME/.local/bin:$PATH"
+export TF_DATA_DIR=${TF_DATA_DIR:-$HOME/.cache/netops/terraform-elastic}
+STATE=${NETOPS_ELASTIC_STATE:-$HOME/.local/share/netops/terraform-elastic.tfstate}
+tf() { terraform -chdir="$ROOT/elastic/terraform" "$@"; }
+
+init() {
+  local v
+  for v in ELASTIC_ES_URL ELASTIC_KIBANA_URL ELASTIC_TF_API_KEY; do
+    [[ -n ${!v:-} ]] || { echo "$v is not set (automation/elastic.env, see docs/elastic.md)" >&2; exit 1; }
+  done
+  # the elasticstack provider reads these; the admin key never reaches a .tf file or the command line
+  export ELASTICSEARCH_ENDPOINTS=$ELASTIC_ES_URL ELASTICSEARCH_API_KEY=$ELASTIC_TF_API_KEY
+  export KIBANA_ENDPOINT=$ELASTIC_KIBANA_URL KIBANA_API_KEY=$ELASTIC_TF_API_KEY
+  install -d -m 700 "$(dirname "$STATE")"
+  tf init -input=false -reconfigure -backend-config="path=$STATE" >/dev/null
+}
+
+gh_secrets() {   # values go over stdin, never on the command line
+  local v
+  for v in ELASTIC_ES_URL ELASTIC_OTLP_ENDPOINT ELASTIC_API_KEY; do
+    if [[ -n ${!v:-} ]]; then printf '%s' "${!v}" | gh secret set "$v" && echo "secret $v set"
+    else echo "skip $v (empty)"; fi
+  done
+}
+
+cmd=${1:-help}; shift || true
+case "$cmd" in
+  plan)       init; tf plan -input=false "$@" ;;
+  apply)      init; tf apply -input=false -auto-approve "$@" ;;
+  role)       init; tf output -raw lab_api_key_role_descriptors | python3 -m json.tool ;;
+  output)     init; tf output "$@" ;;
+  gh-secrets) gh_secrets ;;
+  *)          sed -n '2,7p' "$0"; exit 1 ;;
+esac

@@ -3,6 +3,7 @@
 #   kubernetes/    what you edit: the k3s cluster (cluster.yml) and everything inside it (terraform/)
 #   containerlab/  portable lab bundle, generated: `containerlab deploy -t netops.clab.yml` anywhere
 #   generated/     AVD output, generated: full configs, docs, Ansible inventory — never edit
+#   elastic/       what you edit: everything inside the Elastic project (terraform/)
 #   automation/    tooling: Ansible, render.py, lab helper, verify.sh, CI scripts
 SHELL := /bin/bash
 VENV  := $(HOME)/.venvs/netops/bin
@@ -14,12 +15,11 @@ export EOS_USER ?= admin
 export EOS_PASSWORD ?= admin
 export ANSIBLE_COLLECTIONS_PATH ?= $(HOME)/.ansible/collections
 
-# Elastic export (optional): automation/elastic.env (git-ignored) with ELASTIC_OTLP_ENDPOINT / ELASTIC_API_KEY
--include automation/elastic.env
-export ELASTIC_OTLP_ENDPOINT ELASTIC_API_KEY
-export OTELCOL_PROFILE := $(if $(ELASTIC_OTLP_ENDPOINT),elastic,local)
+# Elastic (optional): settings in the git-ignored automation/elastic.env, or the environment (CI secrets).
+# automation/lab, automation/elastic and automation/verify.sh read them via automation/elastic-env.sh;
+# the collector profile follows them (local / elastic / elastic-otlp), see docs/elastic.md.
 
-.PHONY: help build check-build up redeploy down sync plan apply verify status graph k8s k8s-plan
+.PHONY: help build check-build up redeploy down sync plan apply verify status graph k8s k8s-plan elastic elastic-plan
 
 help:                ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -62,6 +62,12 @@ k8s:                 ## Kubernetes: terraform apply (pod CIDRs, Cilium, BGP, LB 
 
 k8s-plan:            ## Kubernetes: terraform plan (changes nothing)
 	automation/k8s plan
+
+elastic:             ## Elastic: terraform apply (data stream templates, lab API key, Kibana space, data views)
+	automation/elastic apply
+
+elastic-plan:        ## Elastic: terraform plan (changes nothing)
+	automation/elastic plan
 
 verify:              ## OSPF / BGP / EVPN / multi-site / data plane / Kubernetes / telemetry
 	automation/verify.sh

@@ -15,7 +15,10 @@ jobs:
     env:
       EOS_USER: ${{ secrets.EOS_USER }}
       EOS_PASSWORD: ${{ secrets.EOS_PASSWORD }}
+      # Elastic (docs/elastic.md): the collector profile, change events and verify follow these.
+      # Unset secrets = lab-local telemetry.  ELASTIC_OTLP_ENDPOINT is optional (Managed OTLP, later).
       ELASTIC_ES_URL: ${{ secrets.ELASTIC_ES_URL }}
+      ELASTIC_OTLP_ENDPOINT: ${{ secrets.ELASTIC_OTLP_ENDPOINT }}
       ELASTIC_API_KEY: ${{ secrets.ELASTIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
