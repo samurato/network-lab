@@ -67,6 +67,31 @@ subscriptions:
       - otel
       - prom
       - state
+  if-state-sample:
+    paths:
+      - /interfaces/interface/state/oper-status
+    stream-mode: sample
+    sample-interval: 30s
+    outputs:
+      - otel
+      - prom
+  bgp-state-sample:
+    paths:
+      - /network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state/session-state
+    stream-mode: sample
+    sample-interval: 30s
+    outputs:
+      - otel
+      - prom
+  lldp-sample:
+    paths:
+      - /lldp/interfaces/interface/neighbors/neighbor/state/system-name
+      - /lldp/interfaces/interface/neighbors/neighbor/state/port-id
+    stream-mode: sample
+    sample-interval: 30s
+    outputs:
+      - otel
+      - prom
   aft:
     paths:
       - /network-instances/network-instance/afts/ipv4-unicast/ipv4-entry/state
