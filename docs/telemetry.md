@@ -173,6 +173,7 @@ change history, see [State documents](#state-documents-logs-gnmistate)).
 | `if-state` | `/interfaces/interface/state/oper-status` | on change | otel, prom, state | link up/down within a second |
 | `bgp-state` | `/network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state/session-state` | on change | otel, prom, state | underlay, overlay, WAN and Kubernetes BGP sessions |
 | `lldp` | `/lldp/interfaces/interface/neighbors/neighbor/state/{system-name,port-id}` | on change | otel, prom, state | actual cabling, to compare with the intended cabling |
+| `if-state-sample`, `bgp-state-sample`, `lldp-sample` | the same paths as `if-state`, `bgp-state`, `lldp` | sample 30 s | otel, prom | the current value every 30 s: on-change alone sends nothing in a quiet fabric, so "ports down now" had no points to count (same series names) |
 | `aft` | `/network-instances/network-instance/afts/{ipv4-unicast/ipv4-entry/state, ipv6-unicast/ipv6-entry/state, next-hop-groups/next-hop-group, next-hops/next-hop}` | on change | state | every route in every VRF, and where it points: route added, changed, withdrawn |
 | `evpn` | `eos_native:/Sysdb/vxlan/remoteVtepHwConfig/vtepConfig`, `Vxlan1 arista-vxlan/{vlan-to-vnis,vrf-to-vnis}`, `eos_native:/Smash/bridging/status/smashFdbStatus` | on change | state | remote VTEPs, VNI mappings, MAC learn / move / age-out |
 

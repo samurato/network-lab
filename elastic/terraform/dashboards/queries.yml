@@ -189,3 +189,202 @@ pipe_changes: |
   | SORT @timestamp DESC
   | KEEP @timestamp, git.message, git.author, event.outcome, netops.changed_devices, git.sha
   | LIMIT 20
+
+# ---- Link failures (gNMI: ports, LLDP, carrier transitions; state log for the events)
+lnk_down_now: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND net.if.oper_status IS NOT NULL
+  | STATS up = LAST(net.if.oper_status, @timestamp) BY host.name, interface_name
+  | STATS ports_down = SUM(CASE(up == 0, 1, 0))
+  | EVAL ports_down = COALESCE(ports_down, 0)
+lnk_down_events: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "if-state"
+    AND state.oper_status == "DOWN"
+  | STATS port_down_events = COUNT(*)
+lnk_flapping: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND net.if.carrier_transitions IS NOT NULL
+  | STATS t = MAX(TO_DOUBLE(net.if.carrier_transitions)) - MIN(TO_DOUBLE(net.if.carrier_transitions))
+      BY host.name, interface_name
+  | STATS ports_flapped = SUM(CASE(t > 0, 1, 0))
+lnk_withdrawn: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "aft" AND op == "delete"
+  | STATS routes_withdrawn = COUNT(*)
+lnk_events_ts: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+    AND `subscription-name` == "if-state" AND state.oper_status IS NOT NULL
+  | EVAL event = CONCAT("port ", state.oper_status)
+  | STATS events = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), event
+lnk_ports_down_ts: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND net.if.oper_status IS NOT NULL
+  | STATS up = MIN(net.if.oper_status) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name, interface_name
+  | STATS ports_down = SUM(CASE(up == 0, 1, 0)) BY time
+lnk_failures: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE (@timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "if-state"
+           AND state.oper_status IS NOT NULL)
+       OR (@timestamp > NOW() - 24 hours AND `subscription-name` == "lldp" AND state.system_name IS NOT NULL)
+  | STATS downs = COUNT(*) WHERE state.oper_status == "DOWN",
+          first_down = MIN(@timestamp) WHERE state.oper_status == "DOWN",
+          last_down = MAX(@timestamp) WHERE state.oper_status == "DOWN",
+          last_up = MAX(@timestamp) WHERE state.oper_status == "UP",
+          far_end = VALUES(state.system_name) WHERE `subscription-name` == "lldp"
+      BY device = host.name, interface = interface_name
+  | WHERE downs > 0
+  | EVAL state_now = CASE(last_up IS NULL OR last_down > last_up, "DOWN", "UP"),
+         down_s = CASE(state_now == "DOWN", DATE_DIFF("seconds", last_down, NOW()), DATE_DIFF("seconds", last_down, last_up))
+  | KEEP device, interface, far_end, state_now, downs, first_down, last_up, down_s
+  | SORT state_now, first_down DESC
+lnk_event_log: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+    AND ((`subscription-name` == "if-state" AND state.oper_status IS NOT NULL)
+      OR `subscription-name` == "lldp")
+  | EVAL event = CASE(`subscription-name` == "if-state", CONCAT("port ", state.oper_status),
+                      op == "delete", "LLDP neighbour lost",
+                      state.system_name IS NOT NULL, CONCAT("LLDP neighbour ", state.system_name),
+                      state.port_id IS NOT NULL, CONCAT("LLDP far port ", state.port_id),
+                      "LLDP")
+  | KEEP @timestamp, host.name, interface_name, event
+  | SORT @timestamp DESC
+  | LIMIT 100
+lnk_traffic: |
+  TS metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND interface_name LIKE "Ethernet*"
+  | STATS bps = SUM(RATE(net.if.out_octets)) * 8
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name, interface_name
+  | EVAL mbps = ROUND(bps / 1000000, 2), port = CONCAT(host.name, " ", interface_name)
+  | WHERE mbps >= 0.5
+  | KEEP time, port, mbps
+lnk_routes_withdrawn: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "aft" AND op == "delete"
+  | STATS withdrawn = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name
+lnk_bgp_changes: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "bgp-state"
+    AND state.session_state IS NOT NULL
+  | KEEP @timestamp, host.name, `network-instance_name`, `neighbor_neighbor-address`, state.session_state
+  | SORT @timestamp DESC
+  | LIMIT 50
+
+# ---- Fault impact (one timeline across network, routing and the app; telemetry only)
+imp_bgp_down_now: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND net.bgp.session_state IS NOT NULL
+  | STATS s = LAST(net.bgp.session_state, @timestamp)
+      BY host.name, `network-instance_name`, `neighbor_neighbor-address`
+  | STATS bgp_not_established = SUM(CASE(s < 6, 1, 0))
+  | EVAL bgp_not_established = COALESCE(bgp_not_established, 0)
+imp_route_changes_5m: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE @timestamp > NOW() - 5 minutes AND `subscription-name` == "aft"
+  | STATS route_changes_5m = COUNT(*)
+imp_events_ts: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | EVAL event = CONCAT(`subscription-name`, " ", op)
+  | STATS events = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), event
+imp_bgp_down_ts: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND net.bgp.session_state IS NOT NULL
+  | STATS s = MIN(net.bgp.session_state)
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name, `network-instance_name`, `neighbor_neighbor-address`
+  | STATS sessions_not_established = SUM(CASE(s < 6, 1, 0)) BY time
+imp_route_changes_ts: |
+  FROM logs-gnmi.state.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "aft"
+  | STATS route_changes = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name
+imp_web_ts: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*"
+  | STATS p95_ms = PERCENTILE(duration, 95) / 1000000,
+          errors_5xx = SUM(CASE(http.status_code >= 500, 1, 0))
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend)
+imp_web_rpm_ts: |
+  FROM traces-*.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*" AND k8s.node.name IS NOT NULL
+  | STATS requests = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+
+# ---- Chaos command center (Chaos lab space). logs-chaos.* is append-only and is the answer key: the lab key
+# can write it but not read it. Each publish is one batch (one @timestamp); "latest per run" = INLINE STATS
+# MAX(@timestamp) BY run_id.
+chaos_active: |
+  FROM logs-chaos.runs-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND status == "running"
+  | STATS active_faults = COUNT(*)
+chaos_runs_kpi: |
+  FROM logs-chaos.runs-*
+  | WHERE started >= ?_tstart AND started <= ?_tend
+  | STATS runs = COUNT_DISTINCT(run_id)
+chaos_detect_pct: |
+  FROM logs-chaos.signals-*
+  | WHERE started >= ?_tstart AND started <= ?_tend
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest
+  | STATS detected_pct = ROUND(100.0 * SUM(CASE(detected, 1, 0)) / COUNT(*), 0)
+chaos_ttd: |
+  FROM logs-chaos.signals-*
+  | WHERE started >= ?_tstart AND started <= ?_tend
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND detected
+  | STATS median_ttd_s = ROUND(MEDIAN(ttd_s), 1)
+chaos_now: |
+  FROM logs-chaos.runs-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND status == "running"
+  | KEEP started, experiment, title, fault, targets, injected, hold_s
+  | SORT started DESC
+chaos_runs: |
+  FROM logs-chaos.runs-*
+  | WHERE started >= ?_tstart AND started <= ?_tend
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest
+  | EVAL signals = CONCAT(TO_STRING(detected), " / ", TO_STRING(total))
+  | KEEP started, experiment, title, status, recovered, recovery_s, signals, ended, run_id
+  | SORT started DESC
+  | LIMIT 100
+chaos_coverage: |
+  FROM logs-chaos.runs-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND total IS NOT NULL
+  | STATS last_run = MAX(started), detected = LAST(detected, started), total = LAST(total, started), runs = COUNT(*)
+      BY experiment, layer
+  | EVAL coverage_pct = ROUND(100.0 * detected / total, 0)
+  | KEEP experiment, layer, coverage_pct, detected, total, runs, last_run
+  | SORT experiment
+chaos_catalogue: |
+  FROM logs-chaos.experiments-*
+  | INLINE STATS latest = MAX(@timestamp) BY experiment
+  | WHERE @timestamp == latest
+  | KEEP experiment, layer, title, random, blast_radius, signals
+  | SORT experiment
+chaos_gaps: |
+  FROM logs-chaos.signals-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND NOT detected
+  | STATS missed = COUNT(*), last_missed = MAX(started) BY experiment, label
+  | SORT experiment
+chaos_ttd_by_signal: |
+  FROM logs-chaos.signals-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND detected
+  | STATS runs = COUNT(*), avg_ttd_s = ROUND(AVG(ttd_s), 1), max_ttd_s = MAX(ttd_s) BY experiment, label
+  | SORT avg_ttd_s DESC
+chaos_events_ts: |
+  FROM logs-chaos.events-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | STATS events = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), event.action
+chaos_event_log: |
+  FROM logs-chaos.events-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | KEEP @timestamp, event.action, experiment, what, message
+  | SORT @timestamp DESC
+  | LIMIT 100
