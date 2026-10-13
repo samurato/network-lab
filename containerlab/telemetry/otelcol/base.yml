@@ -26,6 +26,8 @@ receivers:
       - /var/lib/netops-state/gnmi-state*.json   # with the rotated files, so nothing is lost on a rotation
     start_at: beginning
     storage: file_storage/state
+    retry_on_failure:            # when the exporter pushes back, wait and retry: never drop state changes
+      enabled: true
     operators:
       - type: json_parser
         timestamp:               # the device's time of the change; Elastic keeps the read time as observed_timestamp

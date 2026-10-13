@@ -126,6 +126,11 @@ plain `containerlab deploy` of the bundle works and exports nothing.
 
 ---
 
+**Export queue** (`elastic` profile): `sending_queue` on disk (`file_storage/queue`), sized in items (200,000),
+`block_on_overflow: true` so a full queue slows the receivers instead of dropping data, and batches flushed every
+second (1,000–10,000 items). The exporter's defaults (10 requests, 10 s flush) held about 33 documents a second and
+dropped state lines when full. Watch it on the *Pipeline & changes* dashboard (export queue).
+
 ## 5. Data streams
 
 The `elasticsearch` exporter routes each signal to `<type>-<dataset>.otel-default`, Elastic's naming

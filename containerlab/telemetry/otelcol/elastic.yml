@@ -11,9 +11,18 @@ exporters:
     endpoints:
       - ${file:/etc/otelcol/secrets/es_url}
     api_key: ${file:/etc/otelcol/secrets/api_key}
-    sending_queue:
-      enabled: true
+    sending_queue:               # the exporter's defaults (10 requests, 10 s flush) held about 33 docs/s and
+      enabled: true              # dropped the rest when full; sized here in items, blocking instead of dropping
       storage: file_storage/queue
+      num_consumers: 10
+      sizer: items
+      queue_size: 200000
+      block_on_overflow: true
+      batch:
+        flush_timeout: 1s
+        sizer: items
+        min_size: 1000
+        max_size: 10000
 
 service:
   extensions:

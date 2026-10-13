@@ -36,7 +36,7 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 | `make verify` checks freshness in Elastic with ES\|QL | |
 
 **Lab status:** running since 2026-10-13 (brought back with `make up` for Step 6, redeployed for the new telemetry
-binds; `make verify` 0 FAIL). **Next:** the Step 6 withdraw drill, then Step 7 (syslog and FRR WAN telemetry).
+binds; `make verify` 0 FAIL). **Next:** a Kafka buffer between the collector and Elastic (asked 2026-10-13), then Step 7 (syslog and FRR WAN telemetry).
 
 The Elastic project is **Serverless, Elasticsearch type** (no Managed OTLP endpoint, no Observability apps).
 The collector writes straight to Elasticsearch and is ready for a Managed OTLP endpoint
@@ -161,11 +161,24 @@ In `automation/telemetry/gnmic.base.yml`:
   collector's `file_log` receiver reads it into `logs-gnmi.state.otel-default` (logsdb, 30 days, Terraform
   template). One document per change, `op` = `update` / `delete`, the device's change time as `@timestamp`.
   (The EDOT Collector has no TCP log receiver, hence the file.)
+- [x] **Found and fixed on the way:**
+  - gnmic 0.49's target file loader re-subscribed every switch every 30 s (it saw each target as changed), so
+    the switches resent all their routes and MACs: about 16,000 state lines a minute. Targets are now written into
+    `gnmic.yml`; quiet fabric: about 20 lines a minute;
+  - the Elasticsearch exporter's default queue (10 requests, 10 s flush) moved about 33 documents a second and
+    made `file_log` drop lines when full (the first drill was lost that way). The `elastic` profile now sizes the
+    queue in items (200,000), blocks instead of dropping, flushes every second; `file_log` retries on push-back.
+    A 190,000-document backlog cleared in under 20 s.
 - [x] Dashboard: *Fabric health* has a state-changes table; data view *Fabric state changes (gnmic)*;
   `make verify` checks that every switch has state documents.
 
 **Done when:**
-- ES|QL on `logs-gnmi.state` shows a route withdraw/add when you shut a leaf uplink; **pending: drill to run**;
+- ES|QL on `logs-gnmi.state` shows a route withdraw/add when you shut a leaf uplink. ✔ Drill 2026-10-13 09:14 UTC,
+  dc1-leaf1 Ethernet1 shut for 30 s: Ethernet1 `DOWN` (09:14:01.519), routes re-pointed from the two-spine ECMP group
+  to one next-hop group and the link's /31 withdrawn on dc1-leaf1 and its neighbours (`op` = `delete`), LLDP
+  neighbour removed, then `UP` (09:14:31.871), LLDP `dc1-spine1` back, BGP 10.1.0.1 `ACTIVE` → `ESTABLISHED`.
+  Gap: cEOS streamed the BGP recovery but not the session's drop; the drop is only in the 30 s
+  `net.bgp.session_state` samples;
 - series count is under 2.5k. ✔ 1,897 (was about 3,600).
 
 ### Step 7 – Syslog receiver and FRR WAN telemetry
@@ -301,7 +314,7 @@ RFC 3164 senders.
 ## Progress log
 | Date | Step | PR | Notes |
 |---|---|---|---|
-| 2026-10-13 | 6 | (this PR) | gnmic: AFT routes, EVPN/VXLAN, MTU, OSPF LSA count; CPU dropped; short `net.*` names; state changes → `logs-gnmi.state` via a shared file and `file_log`. 1,897 series (was ~3,600). Found: no OSPF neighbour state over gNMI on cEOS 4.36; `in` is an ES\|QL keyword; logsdb hides a record-level `host.name` (moved to the resource). `make verify` 0 FAIL |
+| 2026-10-13 | 6 | #12 | gnmic: AFT routes, EVPN/VXLAN, MTU, OSPF LSA count; CPU dropped; short `net.*` names; state changes → `logs-gnmi.state` via a shared file and `file_log`. 1,897 series (was ~3,600). Found: no OSPF neighbour state over gNMI on cEOS 4.36; `in` is an ES\|QL keyword; logsdb hides a record-level `host.name` (moved to the resource); gnmic file loader re-subscribing every 30 s (removed); exporter queue too small (sized). Withdraw drill passed. `make verify` 0 FAIL |
 | 2026-10-13 | – | – | Lab shut down. Next: Step 6. Open: cEOS rsyslog crash loop (step 7), leftover `metrics-prometheusreceiver.otel-default` data stream from the first test |
 | 2026-10-13 | 5 + timezone | #10 | AFT on, syslog configured (blocked by cEOS rsyslog loop), sFlow works on cEOS (dc1-leaf1 test), Australia/Sydney on every device. CI deploy verified: topology redeploy, collector profile `elastic`, change event in Elastic, `make verify` 0 FAIL |
 | 2026-10-12 | 16 (part) | #9 | Dashboards as code: Fabric health, Web app, Pipeline & changes (ES\|QL panels, `config_json` in the Kibana API shape) |
