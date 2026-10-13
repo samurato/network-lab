@@ -515,7 +515,7 @@ topology:
       labels:
         role: telemetry
         graph-icon: controller
-        graph-posX: '555'
+        graph-posX: '427'
         graph-posY: '820'
       binds:
         - telemetry/otelcol:/etc/otelcol:ro
@@ -530,7 +530,7 @@ topology:
       labels:
         role: telemetry
         graph-icon: controller
-        graph-posX: '300'
+        graph-posX: '172'
         graph-posY: '820'
       user: 1000:1000
       binds:
@@ -543,6 +543,21 @@ topology:
       ports:
         - 9464:9464
       group: '1'
+    bmp:
+      kind: linux
+      restart-policy: always
+      image: pmacct/pmbmpd:v1.8.0
+      mgmt-ipv4: 172.20.20.253
+      labels:
+        role: telemetry
+        graph-icon: controller
+        graph-posX: '937'
+        graph-posY: '820'
+      user: 1000:1000
+      binds:
+        - telemetry/bmp/pmbmpd.conf:/etc/pmacct/pmbmpd.conf:ro
+        - telemetry/state:/var/lib/netops-state
+      group: '1'
     kafka:
       kind: linux
       restart-policy: always
@@ -551,7 +566,7 @@ topology:
       labels:
         role: telemetry
         graph-icon: controller
-        graph-posX: '810'
+        graph-posX: '682'
         graph-posY: '820'
       binds:
         - telemetry/kafka-data:/var/lib/kafka/data

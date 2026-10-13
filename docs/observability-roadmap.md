@@ -185,6 +185,12 @@ In `automation/telemetry/gnmic.base.yml`:
 - [ ] Collector: add the `syslog` receiver (UDP 514) → `logs-syslog.otel-*`.
 - [ ] FRR (`wan1.conf`, `wan2.conf` render path): `log syslog`, forwarded to the collector.
 - [ ] Add a `frr_exporter` sidecar per WAN router, scraped by the collector's `prometheus` receiver → `metrics-frr.otel-*`.
+- [x] BMP from the WAN routers (2026-10-14): `wan1`/`wan2` stream post-policy routes and their loc-rib best paths
+  (underlay and, through `import-vrf-view`, VRF PROD) to the `bmp` node (pmacct `pmbmpd` v1.8.0, 172.20.20.253),
+  which writes JSON lines into `telemetry/state`; the collector tails them (`file_log/bmp`) into
+  `logs-bgp.bmp.otel-default`. This is what shows a WAN route hijack (origin AS of a prefix changes), which the
+  switches never see because the BGWs filter it. Pre-policy is not monitored: without an adj-rib-in copy FRR
+  reports it inaccurately.
 
 **Blocked for cEOS:** rsyslog crash-loops inside cEOS on this host (Step 5), so the switches send no syslog
 yet. FRR and Linux syslog are not affected. Until cEOS rsyslog is fixed, switch events come from gNMI on-change

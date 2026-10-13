@@ -18,6 +18,6 @@ vrrpd=no
 pathd=no
 vtysh_enable=yes
 zebra_options="  -A 127.0.0.1 -s 90000000"
-bgpd_options="   -A 127.0.0.1"
+bgpd_options="   -A 127.0.0.1 -M bmp"   # -M bmp: BGP Monitoring Protocol export to the bmp node
 staticd_options="-A 127.0.0.1"
 bfdd_options="   -A 127.0.0.1"
