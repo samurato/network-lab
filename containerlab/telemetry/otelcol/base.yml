@@ -4,10 +4,15 @@
 #   elastic       elasticsearch exporter straight to ELASTIC_ES_URL (what runs today)
 #   elastic-otlp  OTLP to an Elastic Managed OTLP endpoint (ELASTIC_OTLP_ENDPOINT; ready for later)
 # Every signal gets the data contract (host.name, device, lab) and a data_stream.dataset, so in Elastic
-# it lands in <type>-<dataset>.otel-default: metrics-gnmi.otel-default, metrics-otelcol.otel-default, ...
+# it lands in <type>-<dataset>.otel-default: metrics-gnmi.otel-default, logs-gnmi.state.otel-default, ...
+# The switches' state changes (routes, BGP, LLDP, VTEPs, MACs) come from gnmic as a JSON-lines file in
+# /var/lib/netops-state, a directory both containers bind (the EDOT Collector has no TCP log receiver).
 extensions:
   health_check:
     endpoint: 0.0.0.0:13133
+  file_storage/state:            # read offsets, next to the file: a restart or redeploy doesn't re-send old lines
+    directory: /var/lib/netops-state/otelcol
+    create_directory: true
 
 receivers:
   otlp:
@@ -16,6 +21,37 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
+  file_log/gnmi_state:           # gnmic's state output (automation/telemetry/gnmic.base.yml, outputs.state)
+    include:
+      - /var/lib/netops-state/gnmi-state*.json   # with the rotated files, so nothing is lost on a rotation
+    start_at: beginning
+    storage: file_storage/state
+    retry_on_failure:            # when the exporter pushes back, wait and retry: never drop state changes
+      enabled: true
+    operators:
+      - type: json_parser
+        timestamp:               # the device's time of the change; Elastic keeps the read time as observed_timestamp
+          parse_from: attributes.timestamp
+          layout_type: epoch
+          layout: ns
+      # the switch becomes the record's resource, as on the metrics (the receiver groups records by resource).
+      # host.name must be a resource attribute: a logsdb index has its own top-level host.name, which hides
+      # a record-level one.
+      - type: copy
+        from: attributes.tags.source
+        to: resource["host.name"]
+      - type: move
+        from: attributes.tags.source
+        to: resource["device"]
+      - type: move
+        from: attributes.tags.site
+        to: resource["site"]
+      - type: move
+        from: attributes.tags.role
+        to: resource["role"]
+      - type: move
+        from: attributes.tags.vendor
+        to: resource["vendor"]
   prometheus/self:               # the collector's own metrics (queue size, refused / failed sends)
     config:
       scrape_configs:
@@ -34,6 +70,19 @@ processors:
     include:
       metric_types:
         - histogram
+  transform/gnmi_state:          # one gnmic event -> one flat log record in logs-gnmi.state.otel-*
+    error_mode: ignore
+    log_statements:
+      - context: log
+        conditions:
+          - attributes["log.file.name"] != nil and IsMatch(attributes["log.file.name"], "^gnmi-state")
+        statements:
+          - merge_maps(attributes, attributes["tags"], "upsert") where attributes["tags"] != nil
+          - merge_maps(attributes, attributes["values"], "upsert") where attributes["values"] != nil
+          - set(attributes["state.deleted_paths"], attributes["deletes"]) where attributes["deletes"] != nil
+          - set(attributes["data_stream.dataset"], "gnmi.state")
+          - set(body, Concat([resource.attributes["host.name"], attributes["subscription-name"], attributes["op"]], " "))
+          - delete_matching_keys(attributes, "^(tags|values|deletes|name|timestamp|source|log\\.file\\.name)$")
   transform/contract:            # data contract: every signal carries host.name (+ device) and lab
     metric_statements:
       - context: resource
@@ -59,6 +108,7 @@ exporters:
 service:
   extensions:
     - health_check
+    - file_storage/state
   telemetry:
     metrics:
       level: normal
@@ -90,8 +140,10 @@ service:
     logs:
       receivers:
         - otlp
+        - file_log/gnmi_state
       processors:
         - memory_limiter
+        - transform/gnmi_state
         - transform/contract
       exporters:
         - debug

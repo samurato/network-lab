@@ -6,7 +6,7 @@ the reference for the data it consumes.
 
 | | |
 |---|---|
-| **Works today** | All 14 cEOS switches stream gNMI to gnmic, then over OTLP to the EDOT Collector (Elastic's OpenTelemetry distribution), which writes to Elastic. The web app's traces, metrics and logs take the same path. About 3,600 live series. |
+| **Works today** | All 14 cEOS switches stream gNMI to gnmic, then over OTLP to the EDOT Collector (Elastic's OpenTelemetry distribution), which writes to Elastic. Route, BGP, port, LLDP and EVPN changes go to `logs-gnmi.state` as documents. The web app's traces, metrics and logs take the same path. About 1,900 live series. |
 | **Not yet** | WAN routers, hosts, syslog, routes, flows, Kubernetes and Cilium are not collected. See [Known gaps](#9-known-gaps) and the [roadmap](observability-roadmap.md). The Elastic side (keys, data streams, Terraform) is described in [elastic.md](elastic.md). |
 
 Contents:
@@ -83,7 +83,6 @@ Everything is generated from the repo; nothing on the host is hand-edited.
 | `containerlab/telemetry/otelcol/elastic-otlp.yml` | **yes** | profile `elastic-otlp`: OTLP to a Managed OTLP endpoint (for later) |
 | `containerlab/telemetry/otelcol/local.yml` | **yes** | profile `local`: nothing exported |
 | `containerlab/telemetry/otelcol/profile.yml` | no, generated | copy of `local.yml`; `automation/lab` overwrites it in the running bundle |
-| `containerlab/telemetry/gnmic/targets.yml` | no, generated | one target per switch with its tags |
 | `containerlab/telemetry/gnmic/gnmic.yml` | no, generated | the base file plus the per-device `used-ports` filter |
 | `automation/render.py` (section `# ---- telemetry`) | code | builds the generated files and the `gnmic` and `otelcol` nodes in `netops.clab.yml` |
 | `automation/lab` (`collector_profile`) | code | picks the collector profile, writes the Elastic secrets into the bundle, restarts changed telemetry nodes |
@@ -95,7 +94,7 @@ Everything is generated from the repo; nothing on the host is hand-edited.
 flowchart LR
   NET["network/<br/>inventory + group_vars"] --> R["make build<br/>(render.py)"]
   BASE["automation/telemetry/<br/>gnmic.base.yml"] --> R
-  R --> T["containerlab/telemetry/gnmic/<br/>targets.yml + gnmic.yml"]
+  R --> T["containerlab/telemetry/gnmic/<br/>gnmic.yml (targets inside)"]
   OCF["containerlab/telemetry/otelcol/*.yml"] --> B
   T --> B["make sync / make apply<br/>~/clab-runs/netops-bundle"]
   B --> RUN["running gnmic + otelcol<br/>(bind-mounted, read-only)"]
@@ -152,61 +151,56 @@ container send samples at all? **Yes:** hardware samples count up in `show sflow
 
 ## 4. gnmic: the collector
 
-One gnmic container holds a long-lived subscription to every target. The target file is reloaded every
-30 s, so new or removed targets are picked up without a restart. Subscription changes need a restart; see
-[Operating it](#8-operating-it).
+One gnmic container holds a long-lived subscription to every target. The targets are written into
+`gnmic.yml` by `make build`; any change (targets or subscriptions) is applied by `make sync`, which restarts
+gnmic. There is deliberately no target file loader: gnmic 0.49's loader saw every target as changed on each
+30 s reload and re-subscribed all of them, so the switches resent their whole state (every route and MAC) twice
+a minute. See [Operating it](#8-operating-it).
 
 ### Subscriptions
 
-| Name | Path | Mode | Why the agent needs it |
-|---|---|---|---|
-| `if-counters` | `/interfaces/interface/state/counters` | sample 10 s | traffic, errors, discards, carrier flaps per port |
-| `if-state` | `/interfaces/interface/state/oper-status` | on change | link up/down within a second |
-| `bgp-state` | `/network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state/session-state` | on change | underlay, overlay, WAN and Kubernetes BGP sessions |
-| `bgp-prefixes` | `.../bgp/neighbors/neighbor/afi-safis/afi-safi/state/prefixes` | sample 30 s | route counts per session: a leak, a withdrawal or a policy mistake |
-| `platform` | `/components/component/cpu/utilization/state/instant`, `/components/component/state/memory` | sample 30 s | control-plane load |
-| `lldp` | `/lldp/interfaces/interface/neighbors/neighbor/state/{system-name,port-id}` | on change | actual cabling, to compare with the intended cabling |
+Each subscription names its outputs: `otel` (metrics to Elastic), `prom` (local debug tap) and `state` (the
+change history, see [State documents](#state-documents-logs-gnmistate)).
+
+| Name | Path | Mode | Outputs | Why the agent needs it |
+|---|---|---|---|---|
+| `if-counters` | `/interfaces/interface/state/counters` | sample 10 s | otel, prom | traffic, errors, discards, carrier flaps per port |
+| `if-mtu` | `/interfaces/interface/subinterfaces/subinterface/ipv4/state/mtu` | sample 300 s | otel, prom | MTU mismatches (a classic silent fault) |
+| `bgp-prefixes` | `.../bgp/neighbors/neighbor/afi-safis/afi-safi/state/prefixes` | sample 30 s | otel, prom | route counts per session: a leak, a withdrawal or a policy mistake |
+| `platform` | `/components/component/state/memory` | sample 30 s | otel, prom | control-plane memory |
+| `ospf` | `eos_native:/Sysdb/routing/ospf/status` | sample 30 s | otel, prom | LSA count per instance: moves with every underlay topology change |
+| `if-state` | `/interfaces/interface/state/oper-status` | on change | otel, prom, state | link up/down within a second |
+| `bgp-state` | `/network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state/session-state` | on change | otel, prom, state | underlay, overlay, WAN and Kubernetes BGP sessions |
+| `lldp` | `/lldp/interfaces/interface/neighbors/neighbor/state/{system-name,port-id}` | on change | otel, prom, state | actual cabling, to compare with the intended cabling |
+| `aft` | `/network-instances/network-instance/afts/{ipv4-unicast/ipv4-entry/state, ipv6-unicast/ipv6-entry/state, next-hop-groups/next-hop-group, next-hops/next-hop}` | on change | state | every route in every VRF, and where it points: route added, changed, withdrawn |
+| `evpn` | `eos_native:/Sysdb/vxlan/remoteVtepHwConfig/vtepConfig`, `Vxlan1 arista-vxlan/{vlan-to-vnis,vrf-to-vnis}`, `eos_native:/Smash/bridging/status/smashFdbStatus` | on change | state | remote VTEPs, VNI mappings, MAC learn / move / age-out |
+
+Not collected, on purpose:
+- **CPU:** cEOS reports the lab host's 64 cores (`CPU0`…`CPU63`) for every switch, not the switch (896
+  meaningless series). Per-switch CPU comes from the container stats ([roadmap Step 12](observability-roadmap.md)).
+- **OSPF neighbours:** cEOS 4.36 has no OSPF adjacency state over gNMI (OpenConfig `ospfv2` is config only,
+  and the EOS-native status has no neighbour table). A lost adjacency shows up as withdrawn OSPF routes in the
+  `aft` state documents and as an LSA count change.
+- **MAC counts as a metric:** the MAC table is in the state documents (learn, move, age-out); a count is an
+  ES|QL aggregation over them.
 
 ### Event processors (in order)
 
-| Processor | Type | Does |
-|---|---|---|
-| `used-ports` | `event-drop` (generated) | drops interface events for ports the device doesn't use |
-| `now` | `event-override-ts` (ns) | stamps the collection time. cEOS keeps the device timestamp of an unchanged value, so idle counters would be re-sent with an old timestamp (Elastic drops them as duplicates, and they look stale) |
-| `states` | `event-starlark` | `oper-status`: `UP` → 1, anything else → 0. `session-state`: `IDLE` 1, `CONNECT` 2, `ACTIVE` 3, `OPENSENT` 4, `OPENCONFIRM` 5, `ESTABLISHED` 6. Each state is then one numeric series that can be thresholded |
-| `numbers` | `event-convert` | every remaining value → float |
+| Processor | Type | Outputs | Does |
+|---|---|---|---|
+| `used-ports` | `event-drop` (generated) | all | drops interface events for ports the device doesn't use |
+| `names` | `event-starlark` | otel, prom | gNMI path → short metric name (the [catalogue](#metrics)); anything not in the catalogue is dropped. `oper-status`: `UP` → 1, anything else → 0. `session-state`: `IDLE` 1, `CONNECT` 2, `ACTIVE` 3, `OPENSENT` 4, `OPENCONFIRM` 5, `ESTABLISHED` 6, so each state is one numeric series that can be thresholded |
+| `now` | `event-override-ts` (ns) | otel, prom | stamps the collection time. cEOS keeps the device timestamp of an unchanged value, so idle counters would be re-sent with an old timestamp (Elastic drops them as duplicates, and they look stale) |
+| `numbers` | `event-convert` | otel, prom | every remaining value → float |
+| `state-docs` | `event-starlark` | state | values → `state.<leaf>`, `op` = `update` / `delete`; EOS-native tables (VTEPs, MACs) split into one event per entry with the key as a tag; 64-bit ids → strings. Keeps the device timestamp: the time of the change |
 
-### Output
+### Outputs
 
-```yaml
-outputs:
-  otel:
-    type: otlp
-    endpoint: 172.20.20.250:4317
-    protocol: grpc
-    metric-prefix: gnmi
-    strip-leading-underscore: true
-    strings-as-attributes: true
-    resource-tag-keys:
-      - source
-      - site
-      - role
-      - vendor
-    counter-patterns:
-      - octets|pkts|packets|errors|discards|drops|messages
-  prom:                       # local debug tap only
-    type: prometheus
-    listen: :9464
-    metric-prefix: gnmi
-    strings-as-labels: true
-```
-
-| Setting | Effect |
-|---|---|
-| `metric-prefix: gnmi` | metric name = `gnmi_` + path elements joined by `_`, e.g. `gnmi_interfaces_interface_state_counters_in_octets` |
-| `resource-tag-keys` | `source`, `site`, `role` and `vendor` become **resource** attributes; the path keys (`interface_name`, `neighbor_neighbor_address`, …) stay **data-point** attributes |
-| `counter-patterns` | names matching the pattern are sent as cumulative monotonic sums (counters); the rest as gauges |
-| `strings-as-attributes` | a string value (for example an LLDP neighbour name) becomes an attribute `value` on a series whose value is 1 |
+| Output | Type | Where | Notes |
+|---|---|---|---|
+| `otel` | `otlp` (gRPC) | `172.20.20.250:4317`, the collector | no prefix: metric name = the short name (`net.if.in_octets`). `resource-tag-keys` `source`, `site`, `role`, `vendor` become **resource** attributes; path keys (`interface_name`, `neighbor_neighbor-address`, …) stay **data-point** attributes. `counter-patterns` (`octets\|pkts\|packets\|errors\|discards\|drops\|messages`) are sent as cumulative counters, the rest as gauges. `strings-as-attributes`: a string value (an LLDP neighbour name) becomes attribute `value` on a series whose value is 1 |
+| `state` | `file`, `format: event`, `split-events` | `/var/lib/netops-state/gnmi-state.json` | one JSON event per line; rotated at 20 MB, 2 backups. The folder is `telemetry/state/` in the lab bundle, bound by gnmic and the collector (gnmic runs as uid 1000, the collector's user, so the collector can read the file) |
+| `prom` | `prometheus` | `:9464` on the lab host | local debug tap only, prefix `gnmi`: `gnmi_net_if_in_octets` |
 
 ---
 
@@ -228,16 +222,26 @@ time it copies the bundle, and restarts the collector when they change. Details 
 ### The pipeline today
 
 ```
-receivers:  otlp (gRPC 0.0.0.0:4317, HTTP 0.0.0.0:4318), prometheus/self (the collector's own metrics)
-metrics:    otlp, prometheus/self -> memory_limiter -> cumulative_to_delta/histograms -> transform/contract -> debug [, elasticsearch/elastic]
-traces:     otlp                  -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
-logs:       otlp                  -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
+receivers:  otlp (gRPC 0.0.0.0:4317, HTTP 0.0.0.0:4318), prometheus/self (the collector's own metrics),
+            file_log/gnmi_state (gnmic's state file, /var/lib/netops-state/gnmi-state*.json)
+metrics:    otlp, prometheus/self    -> memory_limiter -> cumulative_to_delta/histograms -> transform/contract -> debug [, elasticsearch/elastic]
+traces:     otlp                     -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
+logs:       otlp, file_log/gnmi_state -> memory_limiter -> transform/gnmi_state -> transform/contract -> debug [, elasticsearch/elastic]
 ```
 
 - **`transform/contract`** sets resource attributes:
   - on metrics: `host.name` and `device` = `source`; `lab` = `netops`; `data_stream.dataset` = `gnmi` for
     gnmic and `otelcol` for the collector's own metrics;
   - on traces and logs: `lab` = `netops`.
+- **`file_log/gnmi_state`** tails gnmic's state file (with its rotated copies), parses each JSON line,
+  takes the device's change time as the timestamp, and moves the switch (`source` → `host.name`, `device`;
+  `site`, `role`, `vendor`) into the record's **resource**, as on the metrics. It has to be the resource: a
+  logsdb index has its own top-level `host.name`, which hides a record-level one. Read offsets are kept in `file_storage/state`
+  (`/var/lib/netops-state/otelcol`), next to the file, so a collector restart or a lab redeploy doesn't send
+  old lines again. (The EDOT Collector has no TCP log receiver, hence the shared file.)
+- **`transform/gnmi_state`** flattens a gnmic event into one log record: tags (keys) and `state.*` values
+  become attributes, `data_stream.dataset` = `gnmi.state`, the body is a one-line summary
+  (`dc1-leaf1 aft delete`).
 - **`memory_limiter`** refuses data before the collector runs out of memory.
 - **`cumulative_to_delta/histograms`** turns cumulative histograms (the web app's HTTP durations) into delta
   ones: Elasticsearch accepts only delta histograms and the exporter would drop them otherwise.
@@ -259,7 +263,7 @@ logs:       otlp                  -> memory_limiter -> transform/contract -> deb
 | `host.name` | resource | `dc1-leaf1` | collector (`= source`) |
 | `device` | resource | `dc1-leaf1` | collector (`= source`) |
 | `source` | resource | `dc1-leaf1` | gnmic target name |
-| `site` | resource | `dc1`, `dc2` | inventory, via `targets.yml` |
+| `site` | resource | `dc1`, `dc2` | inventory, via the targets in `gnmic.yml` |
 | `role` | resource | `spine`, `leaf`, `bgw` | inventory |
 | `vendor` | resource | `arista` | render.py |
 | `lab` | resource | `netops` | collector |
@@ -269,39 +273,67 @@ logs:       otlp                  -> memory_limiter -> transform/contract -> deb
 | path keys | data point | `interface_name`, `network-instance_name`, `neighbor_neighbor-address`, `afi-safi_afi-safi-name`, `component_name`, `neighbor_id` | the gNMI path |
 
 In Elastic the attribute names keep gnmic's hyphens, so ES|QL needs backticks: `` `neighbor_neighbor-address` ``.
-The Prometheus debug tap turns hyphens into underscores (`neighbor_neighbor_address`). Short, consistent names
-come with [roadmap step 6](observability-roadmap.md#step-6--gnmic-subscriptions).
+The Prometheus debug tap turns hyphens into underscores (`neighbor_neighbor_address`). Metric names are short
+(`net.*`, below); the attribute names stay gnmic's (decided 2026-10-13: readable custom names over the
+OpenTelemetry hardware conventions, see [Design decisions](#11-design-decisions)).
 
 ### Metrics
 
-Names below are the OTLP names, which are also the field names in Elastic. The Prometheus debug tap adds `_total` to counters.
+Names are short and dotted, set by the `names` processor in `gnmic.base.yml` (the one place to change them).
+They are also the field names in Elastic. The Prometheus debug tap writes them as `gnmi_net_if_in_octets`
+(and adds `_total` to counters). The original gNMI path is in the second column; a datapoint's
+`subscription-name` says which subscription it came from.
 
-| Metric | Type | Labels (besides resource) | Meaning |
-|---|---|---|---|
-| `gnmi_interfaces_interface_state_counters_{in,out}_octets` | counter | `interface_name` | bytes |
-| `gnmi_interfaces_interface_state_counters_{in,out}_{pkts,unicast_pkts,multicast_pkts,broadcast_pkts}` | counter | `interface_name` | packets |
-| `gnmi_interfaces_interface_state_counters_{in,out}_errors`, `in_fcs_errors` | counter | `interface_name` | errors |
-| `gnmi_interfaces_interface_state_counters_{in,out}_discards` | counter | `interface_name` | drops (congestion, policy, MTU) |
-| `gnmi_interfaces_interface_state_counters_carrier_transitions` | counter | `interface_name` | link flaps |
-| `gnmi_interfaces_interface_state_counters_last_update` | counter | `interface_name` | device timestamp of the sample (not useful as a metric) |
-| `gnmi_interfaces_interface_state_oper_status` | gauge | `interface_name` | 1 = up, 0 = not up |
-| `gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state` | gauge | `network_instance_name`, `neighbor_neighbor_address` | 6 = ESTABLISHED, 1–5 = other FSM states |
-| `gnmi_..._bgp_neighbors_neighbor_afi_safis_afi_safi_state_prefixes_{received,received_pre_policy,installed,sent,best_paths,best_ecmp_paths}` | gauge | + `afi_safi_afi_safi_name` | prefixes per session and address family |
-| `gnmi_components_component_cpu_utilization_state_instant` | gauge | `component_name` (`CPU0`…`CPU63`) | CPU % per core |
-| `gnmi_components_component_state_memory_{utilized,available}` | gauge | `component_name` | bytes |
-| `gnmi_lldp_interfaces_interface_neighbors_neighbor_state_{system_name,port_id}` | gauge = 1 | `interface_name`, `neighbor_id`, `value` (the neighbour's name or port) | actual LLDP neighbour |
+| Metric | gNMI path | Type | Labels (besides resource) | Meaning |
+|---|---|---|---|---|
+| `net.if.{in,out}_octets` | `/interfaces/interface/state/counters/{in,out}-octets` | counter | `interface_name` | bytes |
+| `net.if.{in,out}_{pkts,unicast_pkts,multicast_pkts,broadcast_pkts}` | `.../counters/{in,out}-{pkts,unicast-pkts,...}` | counter | `interface_name` | packets |
+| `net.if.{in,out}_errors`, `net.if.in_fcs_errors` | `.../counters/{in,out}-errors`, `in-fcs-errors` | counter | `interface_name` | errors |
+| `net.if.{in,out}_discards` | `.../counters/{in,out}-discards` | counter | `interface_name` | drops (congestion, policy, MTU) |
+| `net.if.carrier_transitions` | `.../counters/carrier-transitions` | gauge | `interface_name` | link flaps (cumulative) |
+| `net.if.oper_status` | `/interfaces/interface/state/oper-status` | gauge | `interface_name` | 1 = up, 0 = not up |
+| `net.if.ipv4_mtu` | `/interfaces/interface/subinterfaces/subinterface/ipv4/state/mtu` | gauge | `interface_name`, `subinterface_index` | IPv4 MTU |
+| `net.bgp.session_state` | `/network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state/session-state` | gauge | `network-instance_name`, `neighbor_neighbor-address` | 6 = ESTABLISHED, 1–5 = other FSM states |
+| `net.bgp.prefixes.{received,installed,sent}` | `.../neighbor/afi-safis/afi-safi/state/prefixes/{received,installed,sent}` | gauge | + `afi-safi_afi-safi-name` | prefixes per session and address family (`best-paths`, `best-ecmp-paths`, `received-pre-policy` are not kept: series budget) |
+| `net.ospf.lsa_count` | `eos_native:/Sysdb/routing/ospf/status/<vrf>/instanceStatus/<id>/numLsa` | gauge | `network-instance_name`, `ospf_instance` | LSAs in the database |
+| `net.mem.{utilized,available}` | `/components/component/state/memory/*` | gauge | `component_name` | bytes |
+| `net.lldp.neighbor.{system_name,port_id}` | `/lldp/interfaces/interface/neighbors/neighbor/state/{system-name,port-id}` | gauge = 1 | `interface_name`, `neighbor_id`, `value` (the neighbour's name or port) | actual LLDP neighbour |
 
-### Volume (live, 14 switches)
+### State documents (`logs-gnmi.state`)
+
+Every route, BGP session, port state, LLDP neighbour, VTEP, VNI and MAC **change** is one document in
+`logs-gnmi.state.otel-default` (logsdb, 30 days). After a gnmic (re)start each switch first sends its full
+state, then only changes. EOS sends most leaves in their own notification, so one route is a few documents
+that share its keys.
+
+| Field | Example | Meaning |
+|---|---|---|
+| `@timestamp` | | the device's time of the change |
+| `observed_timestamp` | | when the collector read it |
+| `host.name`, `device` | `dc1-leaf1` | switch |
+| `subscription-name` | `aft`, `bgp-state`, `if-state`, `lldp`, `evpn` | what kind of state |
+| `op` | `update`, `delete` | `delete` = route withdrawn, MAC aged out, VTEP or neighbour gone |
+| keys (tags) | `network-instance_name`, `ipv4-entry_prefix`, `ipv6-entry_prefix`, `next-hop-group_id`, `next-hop_index`, `neighbor_neighbor-address`, `interface_name`, `vtep`, `mac` + `fid` | which object |
+| `state.<leaf>` | `state.next_hop_group`, `state.origin_protocol`, `state.session_state` (`ESTABLISHED`), `state.oper_status` (`UP`), `state.ip_address`, `state.intf`, `state.entryType` | the new value |
+| `state.deleted_paths` | | on a delete: the gNMI path removed |
+
+Following a route to its next hop: `ipv4-entry_prefix` → `state.next_hop_group` = `next-hop-group_id` of an
+`aft` document → its `next-hop_index` → `state.ip_address` / interface of that next hop. AFT ids are 64-bit and
+stored as strings.
+
+### Volume (live, 14 switches, 2026-10-13)
 
 | Group | Series | Note |
 |---|---|---|
-| CPU | 896 | cEOS reports all 64 host cores on each switch, so 14 × 64 |
-| BGP prefixes | 6 × 207 | 207 sessions × address families |
-| Interfaces | 17 × 61 | 61 used ports and loopbacks |
-| BGP state | 69 | sessions |
-| LLDP | 2 × 40 | cabled ports with a neighbour |
-| Memory | 2 × 14 | |
-| **Total** | **about 3,600** | about 180 points/s at the sample intervals |
+| Interfaces (`net.if.*`) | 1,085 | counters, oper-status and MTU on the used ports and loopbacks |
+| BGP (`net.bgp.*`) | 690 | session state + 3 prefix counts per session and address family |
+| LLDP | 80 | 2 per cabled port with a neighbour |
+| Memory | 28 | |
+| OSPF | 14 | LSA count per switch |
+| **Total** | **1,897** | was about 3,600 before step 6 (896 of them were host CPU cores) |
+
+State documents: after a gnmic (re)start each switch sends its full state (about 2,000 documents per switch,
+mostly AFT and MAC leaves); after that only changes, a handful per minute on a quiet fabric.
 
 ---
 
@@ -312,6 +344,7 @@ Setup, keys, profiles, data streams, Terraform and troubleshooting are in [elast
 | Data | Data stream |
 |---|---|
 | gNMI metrics | `metrics-gnmi.otel-default` (time series, 7 days) |
+| gNMI state changes (routes, BGP, ports, LLDP, EVPN) | `logs-gnmi.state.otel-default` (logsdb, 30 days) |
 | the collector's own metrics | `metrics-otelcol.otel-default` (3 days) |
 | web app traces, metrics, logs | `traces-generic.otel-default`, `metrics-generic.otel-default`, `logs-generic.otel-default` |
 | deploy change events | `logs-netops.changes-default` |
@@ -333,8 +366,8 @@ All the queries below were run against the live data.
 // BGP sessions not established right now
 FROM metrics-gnmi.otel-*
 | WHERE @timestamp > NOW() - 2 minutes
-  AND gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state IS NOT NULL
-| STATS state = MAX(gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state)
+  AND net.bgp.session_state IS NOT NULL
+| STATS state = MAX(net.bgp.session_state)
     BY host.name, `network-instance_name`, `neighbor_neighbor-address`
 | WHERE state < 6
 ```
@@ -342,8 +375,8 @@ FROM metrics-gnmi.otel-*
 ```esql
 // cabled ports that are down
 FROM metrics-gnmi.otel-*
-| WHERE @timestamp > NOW() - 2 minutes AND gnmi_interfaces_interface_state_oper_status IS NOT NULL
-| STATS up = MIN(gnmi_interfaces_interface_state_oper_status) BY host.name, interface_name
+| WHERE @timestamp > NOW() - 2 minutes AND net.if.oper_status IS NOT NULL
+| STATS up = MIN(net.if.oper_status) BY host.name, interface_name
 | WHERE up == 0
 ```
 
@@ -351,8 +384,8 @@ FROM metrics-gnmi.otel-*
 // ports with errors or discards in the last 5 minutes
 FROM metrics-gnmi.otel-*
 | WHERE @timestamp > NOW() - 5 minutes
-| STATS err = MAX(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_errors)) - MIN(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_errors)),
-        dsc = MAX(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_discards)) - MIN(TO_DOUBLE(gnmi_interfaces_interface_state_counters_in_discards))
+| STATS err = MAX(TO_DOUBLE(net.if.in_errors)) - MIN(TO_DOUBLE(net.if.in_errors)),
+        dsc = MAX(TO_DOUBLE(net.if.in_discards)) - MIN(TO_DOUBLE(net.if.in_discards))
     BY host.name, interface_name
 | WHERE err > 0 OR dsc > 0
 ```
@@ -361,7 +394,7 @@ FROM metrics-gnmi.otel-*
 // busiest ports right now (bits per second in)
 TS metrics-gnmi.otel-*
 | WHERE @timestamp > NOW() - 5 minutes
-| STATS in_bps = SUM(RATE(gnmi_interfaces_interface_state_counters_in_octets)) * 8 BY host.name, interface_name
+| STATS in_bps = SUM(RATE(net.if.in_octets)) * 8 BY host.name, interface_name
 | WHERE in_bps IS NOT NULL
 | SORT in_bps DESC
 | LIMIT 10
@@ -373,6 +406,24 @@ FROM metrics-gnmi.otel-*
 | WHERE @timestamp > NOW() - 15 minutes
 | STATS last_seen = MAX(@timestamp) BY host.name
 | WHERE last_seen < NOW() - 60 seconds
+```
+
+```esql
+// routes withdrawn or changed in the last 15 minutes (a lost OSPF adjacency or BGP peer shows up here)
+FROM logs-gnmi.state.otel-*
+| WHERE @timestamp > NOW() - 15 minutes AND `subscription-name` == "aft"
+  AND (`ipv4-entry_prefix` IS NOT NULL OR `ipv6-entry_prefix` IS NOT NULL)
+| KEEP @timestamp, host.name, op, `network-instance_name`, `ipv4-entry_prefix`, `ipv6-entry_prefix`, state.origin_protocol, state.next_hop_group
+| SORT @timestamp DESC
+```
+
+```esql
+// BGP and port state history for one switch
+FROM logs-gnmi.state.otel-*
+| WHERE host.name == "dc1-leaf1" AND `subscription-name` IN ("bgp-state", "if-state")
+| KEEP @timestamp, `subscription-name`, op, `neighbor_neighbor-address`, interface_name, state.session_state, state.oper_status
+| SORT @timestamp DESC
+| LIMIT 20
 ```
 
 ```esql
@@ -391,10 +442,11 @@ FROM logs-netops.changes-default
 
 ```bash
 make verify                                                     # local tap + the == Elastic == freshness checks
-curl -s localhost:9464/metrics | grep -c '^gnmi_'               # series count on gnmic's debug tap (about 3,600)
+curl -s localhost:9464/metrics | grep -c '^gnmi_'               # series count on gnmic's debug tap (about 1,900)
 curl -s localhost:9464/metrics | grep '^gnmi_' | grep -o 'source="[^"]*"' | sort | uniq -c   # per switch
 docker logs --tail 50 clab-netops-gnmic                         # subscription errors, target reconnects
 docker logs --tail 20 clab-netops-otelcol                       # one line per batch; export errors
+tail -n 3 ~/clab-runs/netops-bundle/telemetry/state/gnmi-state.json   # latest state changes, as gnmic wrote them
 ```
 
 ### Ad hoc gNMI from the host
@@ -455,7 +507,7 @@ Checked against the live lab. The paths marked ✗ were tried on `dc1-leaf1` / `
 - Metric names are 50–120 characters long.
 - CPU per host core is a quarter of all series and carries no information.
 - `counters_last_update` is a timestamp sent as a counter.
-- LLDP is sent as metrics with value 1, when it's really topology data.
+- LLDP is sent as metrics with value 1, when it's really topology data (since step 6 it is also in the state documents).
 - No `host.name` / `host.type`, so Elastic's infrastructure views don't recognise the switches.
 
 **Coverage**
@@ -465,14 +517,14 @@ Checked against the live lab. The paths marked ✗ were tried on `dc1-leaf1` / `
 | WAN routers (FRR): links, BGP | not collected. FRR has no gNMI. **This is where `netem` faults are injected.** |
 | Latency and loss on any path | not collected. Delay and loss change no switch counter |
 | Admin status, description | available (`/interfaces/interface/state/admin-status` = `UP`), not subscribed |
-| MTU | `state/mtu` returns 0 on cEOS ✗; the L3 MTU is at `subinterfaces/subinterface/ipv4/state/mtu` (9214) |
+| MTU | `state/mtu` returns 0 on cEOS ✗; the L3 MTU (`subinterfaces/subinterface/ipv4/state/mtu`, 9214) is **collected** as `net.if.ipv4_mtu` (step 6) |
 | BGW VRF handoff sub-interfaces (`Ethernet3.100`) | in the `used-ports` list, but no counters arrive ✗ (also empty under `subinterfaces/.../counters`) |
-| OSPF neighbours | OpenConfig neighbour path rejected ✗; Arista native `eos_native:/Sysdb/routing/ospf/status` works |
-| EVPN / VXLAN | OpenConfig `arista-vxlan` gives config only; MAC tables via `eos_native:/Smash/bridging/status/smashFdbStatus` work |
+| OSPF neighbours | not available over gNMI on cEOS 4.36 ✗: OpenConfig `ospfv2` is config only, the native status has no neighbour table. **Collected instead:** the LSA count (`net.ospf.lsa_count`) and OSPF routes in the `aft` state documents (step 6) |
+| EVPN / VXLAN | **collected** as state documents (step 6): remote VTEPs (`eos_native:/Sysdb/vxlan/remoteVtepHwConfig`), VNI mappings (`arista-vxlan`), MAC table (`eos_native:/Smash/bridging/status/smashFdbStatus`) |
 | BFD sessions | model present, empty (BFD not configured) |
 | Queue drops | model present, empty on cEOS ✗ |
 | Syslog | configured on every switch, but rsyslog inside cEOS crash-loops on this host (`systemctl status rsyslog`: `status=1/FAILURE`, restarting every few seconds); a fresh cEOS with no logging config does the same. No switch syslog is sent. No collector receiver yet either |
-| Routing table (OpenConfig AFT) | **available** since `provider aft` (step 5): `/network-instances/network-instance[name=…]/afts/ipv4-unicast` returns per-VRF routes. Not subscribed yet (step 6) |
+| Routing table (OpenConfig AFT) | **collected** (step 6): every VRF's IPv4/IPv6 routes, next-hop groups and next hops, on change, as `logs-gnmi.state` documents |
 | BGP RIB | still empty under OpenConfig; Arista native paths work |
 | Flows (sFlow / IPFIX) | cEOS sFlow **works** (test on dc1-leaf1, step 5); no collector yet (step 10). IPFIX unproven |
 | Hosts and Kubernetes nodes (network) | not collected |
@@ -585,3 +637,7 @@ Agree with the Elastic owner who applies it. It holds:
 | Local debug tap on gnmic, not the collector | the EDOT Collector has no Prometheus exporter; the tap still works without Elastic | a second collector |
 | One gnmic, one collector | one host, one lab; a restart costs seconds of data | clustered gnmic with a locker, which isn't worth it here |
 | Plain gRPC, lab credentials | a closed lab network | TLS and service accounts on gNMI |
+| Short custom metric names (`net.*`), gnmic's attribute names | readable, one name per signal, decided 2026-10-13 | OpenTelemetry hardware conventions (`hw.network.io` + `network.io.direction`); there are none for BGP, routes or LLDP anyway |
+| Data stream names and templates by Elastic's convention | `<type>-<dataset>.otel-<namespace>` picks Elastic's built-in OTel templates and index mode (TSDS for metrics, logsdb for logs); Terraform only adds retention | custom index names and mappings |
+| State changes as log documents, not metrics | routes, MACs and next hops are strings and appear/disappear: a history of events, not a time series | string metrics with a `value` attribute (one series per route) |
+| gnmic → shared JSON-lines file → collector `file_log` | the EDOT Collector has no TCP/UDP log receiver; a file survives a collector restart, offsets survive a redeploy | gnmic → Kafka; Beats receivers |

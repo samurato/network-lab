@@ -123,6 +123,10 @@ if [[ -n ${ELASTIC_ES_URL:-} && -n ${ELASTIC_API_KEY:-} ]]; then
     | STATS docs = COUNT(*), devices = COUNT_DISTINCT(host.name)')
   [[ ${devs:-0} -eq $ceos ]] && ok "metrics-gnmi: ${docs} docs from $devs/$ceos switches in the last 2 min" \
     || bad "metrics-gnmi: ${devs:-0}/$ceos switches sent data in the last 2 min"
+  # state changes are sent on change only (a quiet fabric sends none), so: every switch has a state history
+  IFS=, read -r docs devs < <(esql 'FROM logs-gnmi.state.otel-* | STATS docs = COUNT(*), devices = COUNT_DISTINCT(host.name)')
+  [[ ${devs:-0} -eq $ceos ]] && ok "logs-gnmi.state: ${docs} state changes from $devs/$ceos switches (routes, BGP, ports, EVPN)" \
+    || bad "logs-gnmi.state: ${devs:-0}/$ceos switches have state changes in Elastic"
   n=$(esql 'FROM metrics-otelcol.otel-* | WHERE @timestamp > NOW() - 2 minutes | STATS n = COUNT(*)')
   [[ ${n:-0} -gt 0 ]] && ok "metrics-otelcol: collector health metrics arriving ($n docs in 2 min)" \
     || bad "metrics-otelcol: no collector health metrics in the last 2 min"

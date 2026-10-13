@@ -19,6 +19,7 @@ exporters:
 service:
   extensions:
     - health_check
+    - file_storage/state           # base.yml: gnmic state-file offsets (a profile's list replaces base's)
     - file_storage/queue
   pipelines:
     metrics:

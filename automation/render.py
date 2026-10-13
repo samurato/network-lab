@@ -11,7 +11,8 @@
                      configs/<router>.conf      full FRR config
                      configs/<router>.netdev.sh kernel devices FRR needs (VRF, 802.1Q sub-interfaces)
                      static/k8s/entrypoint.sh   k3s node entrypoint (copy of kubernetes/node/entrypoint.sh)
-                     telemetry/gnmic/*.yml      gNMI targets + used-port filter
+                     telemetry/gnmic/gnmic.yml  gNMI targets + used-port filter
+                     telemetry/state/           runtime: gnmic's state file + collector offsets (shared bind)
                      telemetry/otelcol/profile.yml  default collector profile (= local.yml)
                    and generated/lab-inventory.yml (FRR WAN + hosts, for make apply),
                        generated/kubernetes.yml   (cluster.yml with the fabric side resolved, for Terraform)
@@ -74,6 +75,12 @@ def sync_file(src: pathlib.Path, dst: pathlib.Path) -> None:
     with open(dst, "r+b" if dst.exists() else "wb") as f:
         f.write(data)
         f.truncate()
+
+
+def sync_file_text(dst: pathlib.Path, text: str) -> None:
+    if not (dst.exists() and dst.read_text() == text):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(text)
 
 
 def clab_port(itf: str) -> str:
@@ -382,13 +389,18 @@ def post() -> None:
     # EDOT Collector (Elastic's OTel distribution).  profile.yml is the `local` profile here; automation/lab
     # overwrites it in the running bundle with elastic.yml / elastic-otlp.yml and writes the Elastic URL and
     # key into telemetry/otelcol/secrets/ (never committed, never in the container environment).
+    # telemetry/state is shared: gnmic writes the switches' state changes there as JSON lines, the collector
+    # tails them (and keeps its read offsets there).  gnmic runs as the collector's uid (1000), so the file it
+    # creates (mode 600) is readable by the collector.
     nodes["otelcol"] = {
         "kind": "linux", "restart-policy": "always", "image": EDOT_IMAGE, "mgmt-ipv4": "172.20.20.250",
-        "labels": {"role": "telemetry"}, "binds": ["telemetry/otelcol:/etc/otelcol:ro"],
+        "labels": {"role": "telemetry"},
+        "binds": ["telemetry/otelcol:/etc/otelcol:ro", "telemetry/state:/var/lib/netops-state"],
         "cmd": "--config /etc/otelcol/base.yml --config /etc/otelcol/profile.yml"}
     nodes["gnmic"] = {
         "kind": "linux", "restart-policy": "always", "image": "ghcr.io/openconfig/gnmic:0.49.0", "mgmt-ipv4": "172.20.20.251",
-        "labels": {"role": "telemetry"}, "binds": ["telemetry/gnmic:/etc/gnmic:ro"],
+        "labels": {"role": "telemetry"}, "user": "1000:1000",
+        "binds": ["telemetry/gnmic:/etc/gnmic:ro", "telemetry/state:/var/lib/netops-state"],
         "env": {"GNMIC_USERNAME": "${EOS_USER:=admin}", "GNMIC_PASSWORD": "${EOS_PASSWORD:=admin}"},
         "cmd": "--config /etc/gnmic/gnmic.yml subscribe",
         "ports": ["9464:9464"]}   # gnmic's own Prometheus output: the local debug tap (curl localhost:9464/metrics)
@@ -417,8 +429,8 @@ def post() -> None:
         "name": d, "insecure": True,
         "event-tags": {"site": nodes[d]["labels"]["site"], "role": nodes[d]["labels"]["role"], "vendor": "arista"}}
         for d in sc}
-    dump(CLAB / "telemetry" / "gnmic" / "targets.yml", targets)
     gn = load(AUTOMATION / "telemetry" / "gnmic.base.yml")
+    gn["targets"] = targets
     # drop interface series for ports a device doesn't use (cEOS exposes 16 Ethernet ports)
     unused = "\n  or ".join(
         f'(.tags.source == "{d}" and (.tags.interface_name | IN({", ".join(f'"{p}"' for p in ports)}) | not))'
@@ -428,6 +440,10 @@ def post() -> None:
     for out in gn["outputs"].values():
         out["event-processors"] = ["used-ports", *out.get("event-processors", [])]
     dump(CLAB / "telemetry" / "gnmic" / "gnmic.yml", gn)
+    # bind sources must exist before deploy; the files in it are runtime only (git-ignored, kept by automation/lab)
+    sync_file_text(CLAB / "telemetry" / "state" / "README.md",
+                   "Runtime only: gnmic writes the switches' state changes here (gnmi-state.json) and the collector\n"
+                   "keeps its read offsets in otelcol/.  Both containers bind this folder; see docs/telemetry.md.\n")
     # collector: the bundle's default profile is `local`, so a plain `containerlab deploy` exports nothing
     sync_file(CLAB / "telemetry" / "otelcol" / "local.yml", CLAB / "telemetry" / "otelcol" / "profile.yml")
 

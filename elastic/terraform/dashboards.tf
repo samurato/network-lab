@@ -20,7 +20,7 @@ resource "elasticstack_kibana_dashboard" "fabric" {
   space_id     = elasticstack_kibana_space.netops.space_id
   dashboard_id = "netops-fabric"
   title        = "NetOps · Fabric health"
-  description  = "cEOS fabric: switches reporting, BGP, ports, traffic, errors, LLDP (gNMI)"
+  description  = "cEOS fabric: switches reporting, BGP, ports, traffic, errors, LLDP, state changes (gNMI)"
   time_range = {
     from = "now-1h"
     to   = "now"
@@ -376,6 +376,43 @@ resource "elasticstack_kibana_dashboard" "fabric" {
           },
           {
             column = "neighbour"
+          },
+        ]
+      })
+    },
+    {
+      type = "vis"
+      grid = {
+        x = 0
+        y = 60
+        w = 48
+        h = 16
+      }
+      config_json = jsonencode({
+        type        = "data_table"
+        title       = "State changes: routes, BGP, ports, VTEPs, MACs (newest first; op=delete is a withdraw / loss)"
+        data_source = local.esql_source.fab_state_changes
+        rows = [
+          {
+            column = "@timestamp"
+          },
+          {
+            column = "host.name"
+          },
+          {
+            column = "subscription-name"
+          },
+          {
+            column = "op"
+          },
+          {
+            column = "vrf"
+          },
+          {
+            column = "object"
+          },
+          {
+            column = "new_value"
           },
         ]
       })

@@ -45,7 +45,11 @@ topology_pending() { ! cmp -s "$SRC/netops.clab.yml" "$BUNDLE/netops.clab.yml"; 
 copy_bundle() {   # in place, never unlink+create: a bind-mounted file must keep its inode
   mkdir -p "$BUNDLE"
   rsync -rltp --inplace --delete --exclude '._*' \
-    --exclude /telemetry/otelcol/profile.yml --exclude /telemetry/otelcol/secrets/ "$@" "$SRC/" "$BUNDLE/"
+    --exclude /telemetry/otelcol/profile.yml --exclude /telemetry/otelcol/secrets/ \
+    --include /telemetry/state/README.md --exclude '/telemetry/state/*' "$@" "$SRC/" "$BUNDLE/"
+  # gnmic's state file and the collector's offsets live here at runtime: never deleted by a sync, and writable
+  # by both telemetry containers (uid 1000) whoever runs the lab
+  chmod 777 "$BUNDLE/telemetry/state"
   collector_profile
 }
 

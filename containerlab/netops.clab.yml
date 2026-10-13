@@ -499,6 +499,7 @@ topology:
         graph-posY: '820'
       binds:
         - telemetry/otelcol:/etc/otelcol:ro
+        - telemetry/state:/var/lib/netops-state
       cmd: --config /etc/otelcol/base.yml --config /etc/otelcol/profile.yml
       group: '1'
     gnmic:
@@ -511,8 +512,10 @@ topology:
         graph-icon: controller
         graph-posX: '427'
         graph-posY: '820'
+      user: 1000:1000
       binds:
         - telemetry/gnmic:/etc/gnmic:ro
+        - telemetry/state:/var/lib/netops-state
       env:
         GNMIC_USERNAME: ${EOS_USER:=admin}
         GNMIC_PASSWORD: ${EOS_PASSWORD:=admin}

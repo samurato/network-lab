@@ -2,6 +2,8 @@
 automation/elastic.env
 containerlab/*.annotations.json
 generated/config_backup/
+containerlab/telemetry/state/*
+!containerlab/telemetry/state/README.md
 clab-*/
 __pycache__/
 ._*

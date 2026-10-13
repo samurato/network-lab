@@ -126,14 +126,23 @@ plain `containerlab deploy` of the bundle works and exports nothing.
 
 ---
 
+**Export queue** (`elastic` profile): `sending_queue` on disk (`file_storage/queue`), sized in items (200,000),
+`block_on_overflow: true` so a full queue slows the receivers instead of dropping data, and batches flushed every
+second (1,000–10,000 items). The exporter's defaults (10 requests, 10 s flush) held about 33 documents a second and
+dropped state lines when full. Watch it on the *Pipeline & changes* dashboard (export queue).
+
 ## 5. Data streams
 
-The `elasticsearch` exporter routes each signal to `<type>-<dataset>.otel-default`. The collector's
-`transform/contract` sets the dataset per source:
+The `elasticsearch` exporter routes each signal to `<type>-<dataset>.otel-default`, Elastic's naming
+convention: the `<type>-*.otel-*` prefix picks Elastic's built-in OTel templates and the index mode (time
+series for metrics, logsdb for logs and traces), so the lab never defines mappings, only retention. There is
+no OTLP endpoint in this project; the dataset is the only thing the collector has to get right
+(`transform/contract`, and `transform/gnmi_state` for the state documents):
 
 | Data stream | Source | Retention | Notes |
 |---|---|---|---|
 | `metrics-gnmi.otel-default` | gnmic (14 cEOS switches) | 7 days | time series data stream (TSDS); template `metrics-gnmi.otel`. Counters are `counter_double`: use `TS … RATE()` or `TO_DOUBLE()` |
+| `logs-gnmi.state.otel-default` | gnmic's state output via the collector's `file_log` (14 cEOS switches) | 30 days | logsdb; template `logs-gnmi.state.otel`. One document per route / BGP / port / LLDP / VTEP / VNI / MAC change, `op` = `update` or `delete`; fields in [telemetry.md § State documents](telemetry.md#state-documents-logs-gnmistate) |
 | `metrics-otelcol.otel-default` | the collector's own metrics (scraped from `127.0.0.1:8888`; resource `service.name: elastic-otel-collector`) | 3 days | accepted / refused / sent / failed points, queue size |
 | `traces-generic.otel-default` | web pods | project default | `service.name: web` |
 | `metrics-generic.otel-default` | web pods (HTTP server duration, runtime) | project default | |
@@ -187,7 +196,7 @@ In Kibana, open the **NetOps lab** space, then Dashboards:
 
 | Dashboard | ID | Shows |
 |---|---|---|
-| NetOps · Fabric health | `netops-fabric` | switches reporting, BGP sessions established, ports down, fabric traffic; traffic and BGP prefixes per switch over time; tables for BGP sessions not established, ports down, busiest ports, errors/discards/flaps, LLDP neighbours |
+| NetOps · Fabric health | `netops-fabric` | switches reporting, BGP sessions established, ports down, fabric traffic; traffic and BGP prefixes per switch over time; tables for BGP sessions not established, ports down, busiest ports, errors/discards/flaps, LLDP neighbours, state changes (routes, BGP, ports, VTEPs, MACs; `logs-gnmi.state`) |
 | NetOps · Web app | `netops-web` | requests per minute, p95 latency, 5xx rate, pods reporting; requests per Kubernetes node and p95 latency per route over time; per-route and per-node tables |
 | NetOps · Pipeline & changes | `netops-pipeline` | gNMI docs per minute, switches silent for over 60 s, collector export queue, deploys in 24 h; docs per switch, collector throughput and queue over time; last data per switch; GitOps change events |
 
@@ -225,8 +234,8 @@ FROM metrics-gnmi.otel-*
 // BGP sessions not established right now
 FROM metrics-gnmi.otel-*
 | WHERE @timestamp > NOW() - 2 minutes
-  AND gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state IS NOT NULL
-| STATS state = MAX(gnmi_network_instances_network_instance_protocols_protocol_bgp_neighbors_neighbor_state_session_state)
+  AND net.bgp.session_state IS NOT NULL
+| STATS state = MAX(net.bgp.session_state)
     BY host.name, `network-instance_name`, `neighbor_neighbor-address`
 | WHERE state < 6
 ```
@@ -275,6 +284,7 @@ FROM logs-netops.changes-default
 | `make verify`: `0/14 switches` | `docker logs clab-netops-otelcol` | profile is `local` (`grep -c elasticsearch ~/clab-runs/netops-bundle/telemetry/otelcol/profile.yml`), or a wrong key (`401` / `403` in the log) |
 | `403 ... action [indices:data/write/bulk...] is unauthorized` | collector log | the lab key lacks a privilege; recreate it from `automation/elastic role` |
 | CI deploy turns Elastic off | `collector profile: local` in the deploy log | the repository secrets are not set: `automation/elastic gh-secrets` |
+| `logs-gnmi.state` is empty | `tail ~/clab-runs/netops-bundle/telemetry/state/gnmi-state.json`; `docker logs clab-netops-otelcol \| grep file_log` | no file: gnmic can't write the folder (`automation/lab` makes it mode 777 on every sync; `make sync`). File but no documents: the collector can't read it (gnmic must run as uid 1000) |
 | `metrics-gnmi` shows up as a regular (not time series) data stream | `GET _data_stream/metrics-gnmi.otel-default` | the template was created after the data stream: roll it over with `POST metrics-gnmi.otel-default/_rollover` |
 | collector log: `validation errors ... dropping cumulative temporality histogram` | | a histogram reached the exporter as cumulative; `cumulative_to_delta/histograms` in `base.yml` must stay in the metrics pipeline |
 | collector log: `metric with name ... has already been serialized in document with timestamp` | gnmic timestamps | the same series sent twice with one timestamp; gnmic's `now` processor (`event-override-ts`, precision `ns`) prevents it. `ms` precision would put the data in 1970 |
@@ -307,5 +317,5 @@ without a path) on first use.
 - **Terraform runs from the lab host,** not from CI.
 - **The disk queue is inside the collector container** (`/tmp/otelcol-queue`). It survives a restart, not a
   `make redeploy`.
-- **Only `gnmi` and `otelcol` have their own templates.** The web app's data goes to the `generic` datasets
+- **Only `gnmi`, `gnmi.state` and `otelcol` have their own templates.** The web app's data goes to the `generic` datasets
   with the project's default retention.

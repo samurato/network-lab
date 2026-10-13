@@ -6,11 +6,17 @@ locals {
   metrics_datasets = {
     gnmi = {
       retention   = "7d"
-      description = "cEOS fabric telemetry from gnmic: interfaces, BGP, LLDP, platform"
+      description = "cEOS fabric telemetry from gnmic: interfaces, BGP, LLDP, OSPF, memory, MTU (net.* names)"
     }
     otelcol = {
       retention   = "3d"
       description = "the lab collector's own metrics: accepted, refused, queued, failed"
+    }
+  }
+  logs_datasets = {
+    "gnmi.state" = {
+      retention   = "30d"
+      description = "cEOS state changes from gnmic: routes (AFT), BGP, LLDP, oper-status, VTEPs, VNIs, MACs"
     }
   }
 }
@@ -34,6 +40,36 @@ resource "elasticstack_elasticsearch_index_template" "metrics" {
   template {
     settings = data.elasticstack_elasticsearch_index_template.otel_metrics.template.settings
     mappings = data.elasticstack_elasticsearch_index_template.otel_metrics.template.mappings
+    lifecycle {
+      data_retention = each.value.retention
+    }
+  }
+
+  metadata = jsonencode({
+    description = each.value.description
+    managed_by  = "terraform: samurato/network-lab elastic/terraform"
+  })
+}
+
+data "elasticstack_elasticsearch_index_template" "otel_logs" {
+  name = "logs-otel@template"
+}
+
+resource "elasticstack_elasticsearch_index_template" "logs" {
+  for_each = local.logs_datasets
+
+  name                               = "logs-${each.key}.otel"
+  index_patterns                     = ["logs-${each.key}.otel-*"]
+  priority                           = data.elasticstack_elasticsearch_index_template.otel_logs.priority + 30
+  composed_of                        = data.elasticstack_elasticsearch_index_template.otel_logs.composed_of
+  ignore_missing_component_templates = data.elasticstack_elasticsearch_index_template.otel_logs.ignore_missing_component_templates
+  allow_auto_create                  = true
+
+  data_stream {}
+
+  template {
+    settings = data.elasticstack_elasticsearch_index_template.otel_logs.template.settings
+    mappings = data.elasticstack_elasticsearch_index_template.otel_logs.template.mappings
     lifecycle {
       data_retention = each.value.retention
     }
