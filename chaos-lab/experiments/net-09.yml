@@ -34,6 +34,18 @@ extensions:
   - OSPF routes via dc1-spine2 withdrawn everywhere in DC1
   - 'all interfaces stay up: the device is unreachable, not down'
   - traffic converges on dc1-spine1
+  detect:
+  - signal: bgp_down
+    label: dc1-leaf1 loses its EVPN session to dc1-spine2
+    device: dc1-leaf1
+    peer: 10.1.0.2
+  - signal: bgp_down
+    label: dc1-bgw1 loses its EVPN session to dc1-spine2
+    device: dc1-bgw1
+    peer: 10.1.0.2
+  - signal: routes_withdrawn
+    label: routes withdrawn on dc1-leaf1
+    device: dc1-leaf1
 controls:
 - name: chaoslab
   provider:

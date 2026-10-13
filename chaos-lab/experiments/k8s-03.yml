@@ -28,6 +28,11 @@ extensions:
   - 'dc1-leaf4: BGP session to dc1-k8s-wk2 (10.10.40.5) drops after the hold time; pod CIDR 10.11.2.0/24 withdrawn'
   - 'Kubernetes: node dc1-k8s-wk2 NotReady'
   - dc1-leaf4 Ethernet7 stays up
+  detect:
+  - signal: bgp_down
+    label: dc1-leaf4 loses its BGP session to dc1-k8s-wk2
+    device: dc1-leaf4
+    peer: 10.10.40.5
 controls:
 - name: chaoslab
   provider:

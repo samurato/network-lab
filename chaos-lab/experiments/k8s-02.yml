@@ -31,6 +31,14 @@ extensions:
   - 'web deployment: ready < desired, Pending pods (topology spread, cordoned nodes)'
   - VIP /32s withdrawn by DC1 leaves (externalTrafficPolicy Local)
   - all web traces from DC2 pods
+  detect:
+  - signal: web_requests_drop
+    label: DC1 web pods lose their requests
+    node_prefix: dc1-k8s-
+  - signal: route_change
+    label: public VIP route changes on dc1-leaf1
+    prefix: 192.0.2.10/32
+    device: dc1-leaf1
 controls:
 - name: chaoslab
   provider:

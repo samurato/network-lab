@@ -7,7 +7,7 @@ import logging
 
 from chaoslib.exceptions import InterruptExecution
 
-from chaoslab import config, guard, probes, state, watchdog
+from chaoslab import config, elastic, guard, probes, publish, scorecard, state, watchdog
 
 log = logging.getLogger("chaostoolkit")
 
@@ -33,6 +33,9 @@ def before_experiment_control(context: dict, **kwargs) -> None:
     run = state.start_run(ext, context.get("title", ""))
     deadline = run["hold_seconds"] + int(ext.get("extra_seconds", 0)) + 180
     state.set_watchdog(watchdog.arm(run["run_id"], deadline))
+    publish.catalogue()
+    publish.run(run)
+    publish.event("run.start", run, targets=run["targets"], message=run["title"])
     log.info(f"chaoslab: run {run['run_id']} started; watchdog rolls back after {deadline}s if still active")
 
 
@@ -50,7 +53,14 @@ def after_experiment_control(context: dict, state: dict = None, **kwargs) -> Non
     status = (state or {}).get("status", "unknown")
     if (state or {}).get("deviated"):
         status = "deviated"
-    st.finish_run(status, recovered, seconds)
+    sc = None
+    if elastic.available():               # read-only: did the expected signals reach Elastic?
+        try:
+            sc = scorecard.score(dict(run, ended=st.now()), extension(context).get("detect", []))
+            log.info(f"chaoslab: scorecard {sc['detected']}/{sc['total']} expected signals reached Elastic")
+        except Exception as e:
+            log.error(f"chaoslab: scorecard failed: {e}")
+    st.finish_run(status, recovered, seconds, scorecard=sc)
     if recovered:
         log.info(f"chaoslab: lab healthy again {seconds}s after rollback")
     else:

@@ -28,6 +28,15 @@ extensions:
   - octet rate up on the DC1 BGW <-> WAN links and the DC2 BGWs (net.if.in_octets / out_octets)
   - 'top talker: iperf3-dc1 pod (10.11.x) -> iperf3-dc2 pod (10.21.x), TCP 5201'
   - no protocol change
+  detect:
+  - signal: traffic_above
+    label: dc1-bgw1 receives > 50 Mbps
+    device: dc1-bgw1
+    mbps: 50
+  - signal: traffic_above
+    label: dc1-bgw2 receives > 50 Mbps
+    device: dc1-bgw2
+    mbps: 50
 controls:
 - name: chaoslab
   provider:

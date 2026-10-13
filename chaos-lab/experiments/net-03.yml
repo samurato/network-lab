@@ -31,6 +31,14 @@ extensions:
   - 192.0.2.10/32 routes from DC1 withdrawn (logs-gnmi.state on the BGWs and WAN)
   - web traces only from dc2 pods; dc1 web pods receive no requests
   - 'BGP sessions stay established: a policy fault, not a session fault'
+  detect:
+  - signal: route_change
+    label: public VIP 192.0.2.10/32 route changes on dc1-bgw1
+    prefix: 192.0.2.10/32
+    device: dc1-bgw1
+  - signal: web_requests_drop
+    label: DC1 web pods lose their requests
+    node_prefix: dc1-k8s-
 controls:
 - name: chaoslab
   provider:

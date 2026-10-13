@@ -29,6 +29,10 @@ extensions:
   - 'interface stays up (oper-status 1): a protocol fault, not a link fault'
   - traffic from dc1-leaf3 moves to Ethernet2 (dc1-spine2)
   - config drift on dc1-leaf3 (ip ospf authentication)
+  detect:
+  - signal: routes_withdrawn
+    label: routes withdrawn on dc1-leaf3
+    device: dc1-leaf3
 controls:
 - name: chaoslab
   provider:

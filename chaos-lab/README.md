@@ -12,7 +12,8 @@ chaos-lab lives in this repo but is **separate infrastructure**:
 | Framework | [Chaos Toolkit](https://chaostoolkit.org): each experiment is a YAML file with a steady-state hypothesis, a method (inject, hold) and rollbacks, and every run writes a JSON journal |
 | Drivers | `chaoslab/`: small Python modules the experiments call |
 | Health checks | Measured directly on the lab: HTTP from an Internet user, BGP state on every router, web replicas ready. They **never** read Elastic or telemetry. |
-| Ground truth | Local only: `~/clab-runs/chaos/runs.jsonl`. It is the answer key for scoring an agent, so the agent never sees it. |
+| Ground truth | `~/clab-runs/chaos/runs.jsonl` on the host, published to Elastic's `chaos-*` indices for the Chaos command center. It is the answer key for scoring an agent: the lab key can't read `chaos-*`, and it sits in its own Kibana space. |
+| Scorecard | After each run, chaos-lab checks Elastic (read-only ES\|QL) for every signal the experiment should produce, and records whether it arrived and how fast. A missing signal is an observability gap. |
 
 **Why not Chaos Monkey:**
 - It only terminates instances, and it needs Spinnaker.
@@ -61,6 +62,31 @@ Each generator restarts itself after a fault breaks its connection. All of them 
 The traffic shows up in Elastic as interface counters (every 10 s) and web traces. The ping matrix is for you; the hosts don't send telemetry.
 
 A typical session: `make traffic-start`, then `CHAOSLAB_HOLD=180 make run EXP=net-01`, then `make traffic-status` during the hold, then `make traffic-stop`.
+
+## Dashboards in Elastic
+
+| Dashboard | Space | Shows |
+|---|---|---|
+| **Chaos · Command center** | Chaos lab (`/s/chaos/app/dashboards#/view/chaos-command-center`) | The fault in progress, every run with its outcome and recovery, the scorecard, coverage per experiment, observability gaps, time to detect, and the chaos timeline |
+| **NetOps · Fault impact** | NetOps | Any fault's symptoms across ports, BGP, routes, EVPN, traffic, web requests, latency and errors, and deploys, on one time axis |
+| **NetOps · Link failures** | NetOps | Each failed link with both ends (LLDP), when, how long, flaps, errors, routes withdrawn, and traffic moving to the surviving links |
+
+The NetOps dashboards show only telemetry, which is what an agent sees. The command center lives in its own space because it holds the answers. To investigate a run, read its time window from the command center, then open Fault impact with that time range.
+
+The dashboards are Terraform in `elastic/terraform/` (`dashboards-chaos.tf`, `dashboards-faults.tf`, `chaos.tf`), applied with `make elastic` at the repo root.
+
+**One-time setup for publishing:**
+1. Print the key's role descriptor with `automation/elastic chaos-role`.
+2. In Kibana → API keys, create a key named `chaos-lab` with that descriptor.
+3. Add it to the git-ignored `automation/elastic.env` as `ELASTIC_CHAOS_API_KEY=<encoded key>`.
+4. Run `make publish` to send the catalogue and earlier runs. Every run after that publishes as it goes.
+
+Without the key, runs work as before, but nothing is published.
+
+| Command | Does |
+|---|---|
+| `make score [RUN=<run_id>]` | Recompute a run's scorecard (default: the last run) |
+| `make publish` | Send the catalogue and every recorded run to Elastic again (safe to repeat) |
 
 ## Catalogue
 
@@ -127,7 +153,8 @@ Each experiment's `extensions.expected` lists the symptoms the telemetry should 
 
 | Path | Content |
 |---|---|
-| `~/clab-runs/chaos/runs.jsonl` | One line per run: id, fault, targets, expected symptoms, what was injected and when, end, status, and whether it recovered and how fast |
+| `~/clab-runs/chaos/runs.jsonl` | One line per run: id, fault, targets, expected symptoms, what was injected and when, end, status, whether it recovered and how fast, and the scorecard |
+| Elastic `chaos-*` | The same runs, the scorecard rows, a timeline of injections and rollbacks, and the catalogue (Chaos command center) |
 | `~/clab-runs/chaos/journals/` | The Chaos Toolkit journal for each run, including evidence probe output such as the hijacked route |
 | `~/clab-runs/chaos/logs/` | Run logs |
 | GitHub `drift` issue | A switch or WAN change shows up as drift within 15 min: a realistic operational signal |
@@ -141,6 +168,9 @@ chaoslab/
   control.py          Chaos Toolkit control: guard, run start, watchdog, rollback safety net, recovery check
   guard.py            safety rules
   state.py            active faults + their undo, ground truth, hold, rollback
+  scorecard.py        detection scorecard: did each expected signal reach Elastic, and how fast
+  publish.py          runs, scorecards and the timeline to Elastic (chaos-* indices)
+  elastic.py          Elastic client: writes chaos-* only, reads telemetry with ES|QL
   watchdog.py         dead man's switch
   eos.py frr.py netem.py k8s.py attacker.py     fault drivers
   probes.py           health checks and evidence (direct, never via telemetry)

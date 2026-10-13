@@ -5,7 +5,7 @@ CLI    := PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.cli
 TRAFFIC := PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.traffic
 PROFILE ?=
 
-.PHONY: help venv list validate test dry dry-all run random stop status traffic-start traffic-dry traffic-stop traffic-status
+.PHONY: help venv list validate test dry dry-all run random stop status traffic-start traffic-dry traffic-stop traffic-status score publish
 
 help:            ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-15s %s\n", $$1, $$2}'
@@ -18,7 +18,7 @@ list:            ## experiments, which are eligible for random mode, blast radiu
 	@$(CLI) list
 
 validate:        ## Chaos Toolkit schema validation of every experiment
-	@for f in experiments/*.yml; do PYTHONPATH=$(CURDIR) $(VENV)/bin/chaos --no-log-file validate $$f >/dev/null \
+	@for f in experiments/*.yml; do PYTHONPATH=$(CURDIR) $(VENV)/bin/chaos --no-log-file validate $$f >/dev/null 2>&1 \
 	  && echo "ok    $$f" || { echo "FAIL  $$f"; exit 1; }; done
 
 test:            ## guard self-test (telemetry and management must be refused); changes nothing
@@ -53,3 +53,10 @@ traffic-stop:    ## stop every background traffic process (faults are left alone
 
 traffic-status:  ## running generators + host-to-host ping matrix (loss / latency)
 	@$(TRAFFIC) status
+
+
+score:           ## detection scorecard of RUN=<run_id> (default: the last run): did the signals reach Elastic?
+	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.scorecard $(or $(RUN),last)
+
+publish:         ## send the catalogue and every recorded run to Elastic (Chaos command center); safe to repeat
+	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.publish

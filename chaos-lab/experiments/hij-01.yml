@@ -31,6 +31,13 @@ extensions:
     reports success'
   - 'the BGWs log the route as rejected/filtered: DC routing unchanged'
   - drift on wan1 (static route + network statement)
+  detect:
+  - signal: web_requests_drop
+    label: web requests from the Internet drop
+  - signal: route_change
+    label: 192.0.2.10/32 changes on wan2 (needs WAN telemetry)
+    prefix: 192.0.2.10/32
+    device: wan2
 controls:
 - name: chaoslab
   provider:

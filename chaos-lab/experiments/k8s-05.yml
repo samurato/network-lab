@@ -28,6 +28,10 @@ extensions:
   - a pod in namespace chaos on dc1-k8s-wk1
   - web latency from dc1-k8s-wk1 pods may rise
   - no network symptom
+  detect:
+  - signal: web_latency_up
+    label: web p95 latency up 1.5x on dc1-k8s-wk1
+    node_prefix: dc1-k8s-wk1
 controls:
 - name: chaoslab
   provider:

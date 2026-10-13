@@ -29,6 +29,14 @@ extensions:
   - dc1-spine1 sees its session to dc1-leaf2's loopback flap the same way
   - EVPN type-2/3/5 routes from dc1-leaf2 withdrawn and re-advertised (prefix counts saw-tooth)
   - 'pattern: periodic, admin-initiated (shutdown), not a link fault: interfaces stay up'
+  detect:
+  - signal: bgp_down
+    label: dc1-leaf2 session to 10.1.0.1 leaves ESTABLISHED
+    device: dc1-leaf2
+    peer: 10.1.0.1
+  - signal: bgp_down
+    label: dc1-spine1 sees a session drop
+    device: dc1-spine1
 controls:
 - name: chaoslab
   provider:

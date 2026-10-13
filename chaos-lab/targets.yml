@@ -60,6 +60,13 @@ linux:
   - dc2-k8s-wk3
   - wan-k8s-cp3
 
+# Elastic: chaos-lab publishes its runs to the chaos-* indices (Chaos command center dashboard) with its own key,
+# ELASTIC_CHAOS_API_KEY, and reads telemetry for the detection scorecard. Steady state never uses Elastic.
+# Without the chaos key: no publishing, and the scorecard reads with the lab key the bundle holds.
+elastic:
+  env_file: ../automation/elastic.env     # git-ignored; environment variables win
+  secrets_dir: ~/clab-runs/netops-bundle/telemetry/otelcol/secrets
+
 probes:
   client: inet-k6                       # an Internet user behind wan2
   url: http://192.0.2.10/health         # the public VIP

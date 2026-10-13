@@ -70,6 +70,7 @@ def start_run(ext: dict, title: str) -> dict:
         "experiment": ext["id"],
         "title": title,
         "fault": ext.get("fault"),
+        "layer": ext.get("layer"),
         "targets": ext.get("targets", []),
         "expected": ext.get("expected", []),
         "blast_radius": int(ext.get("blast_radius", 1)),
@@ -103,6 +104,8 @@ def register(inverse: dict, what: str) -> None:
         run["injected"].append({"what": what, "at": now()})
         _write("current.json", run)
     log.info(f"chaoslab: injecting {what}")
+    from chaoslab import publish
+    publish.event("fault.inject", run, what=what)
 
 
 def run_inverse(inverse: dict) -> None:
@@ -131,6 +134,8 @@ def rollback(**_) -> list:
                 run_inverse(f["inverse"])
                 done.append(f["what"])
                 log.info(f"chaoslab: rolled back {f['what']}")
+                from chaoslab import publish
+                publish.event("fault.rollback", current(), what=f["what"])
             except Exception as e:  # keep going: undo as much as possible, keep what failed for a retry
                 failed.append(f)
                 log.error(f"chaoslab: rollback of {f['what']} failed: {e}")
@@ -150,7 +155,7 @@ def hold(seconds=None, **_) -> str:
 
 
 def finish_run(status: str, recovered: bool | None = None, recovery_seconds: float | None = None,
-               journal: str | None = None) -> dict | None:
+               journal: str | None = None, scorecard: dict | None = None) -> dict | None:
     with _locked():
         run = current()
         if not run:
@@ -163,11 +168,32 @@ def finish_run(status: str, recovered: bool | None = None, recovery_seconds: flo
             "recovery_seconds": recovery_seconds,
             "still_active": len(_read("active.json", [])),
             "journal": journal,
+            "scorecard": scorecard,
         })
         with open(_path("runs.jsonl"), "a") as f:
             f.write(json.dumps(run) + "\n")
         _path("current.json").unlink(missing_ok=True)
+    from chaoslab import publish
+    publish.run(run)
+    publish.event("run.end", run, message=f"{status}; recovered={recovered} in {recovery_seconds}s")
     return run
+
+
+def set_scorecard(run_id: str, scorecard: dict) -> None:
+    """Store a (re)computed scorecard on a finished run."""
+    with _locked():
+        p = _path("runs.jsonl")
+        runs = [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
+        for r in runs:
+            if r["run_id"] == run_id:
+                r["scorecard"] = scorecard
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text("".join(json.dumps(r) + "\n" for r in runs))
+        tmp.replace(p)
+    from chaoslab import publish
+    for r in runs:
+        if r["run_id"] == run_id:
+            publish.run(r)
 
 
 def history(n: int = 10) -> list:

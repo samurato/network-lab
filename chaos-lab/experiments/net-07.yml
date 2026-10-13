@@ -29,6 +29,10 @@ extensions:
   - EVPN routes for VNI 10110 from dc1-leaf2 withdrawn; new VNI 19110 with no remote VTEPs
   - dc1-web2 (dc1-leaf2, VLAN 110) cannot reach dc1-web1 (dc1-leaf1); MACs age out
   - no interface or BGP change
+  detect:
+  - signal: vni_change
+    label: VLAN-to-VNI change on dc1-leaf2
+    device: dc1-leaf2
 controls:
 - name: chaoslab
   provider:

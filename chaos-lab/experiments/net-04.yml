@@ -29,6 +29,12 @@ extensions:
   - interface up, BGP up, routes unchanged
   - large DC1<->DC2 flows (stretched VLAN 150, iperf3, cross-DC pod traffic) stall or lose throughput
   - the change shows as drift on dc1-bgw1
+  detect:
+  - signal: mtu
+    label: dc1-bgw1 Ethernet3 IPv4 MTU 1400
+    device: dc1-bgw1
+    interface: Ethernet3
+    value: 1400
 controls:
 - name: chaoslab
   provider:

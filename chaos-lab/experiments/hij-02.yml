@@ -29,6 +29,15 @@ extensions:
   - EVPN multi-site sessions dc1-bgw1/2 <-> dc2-bgw1 (10.2.0.15) drop
   - DCI traffic to dc2-bgw1 black-holed; dc2-bgw2 paths still work
   - 'fix direction: inbound prefix filtering on the BGW WAN-PEERS (only accept WAN infrastructure prefixes)'
+  detect:
+  - signal: route_change
+    label: dc2-bgw1 loopback 10.2.0.15/32 route changes on dc1-bgw1
+    prefix: 10.2.0.15/32
+    device: dc1-bgw1
+  - signal: bgp_down
+    label: dc1-bgw1 loses its EVPN session to dc2-bgw1
+    device: dc1-bgw1
+    peer: 10.2.0.15
 controls:
 - name: chaoslab
   provider:

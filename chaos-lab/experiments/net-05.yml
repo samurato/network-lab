@@ -29,6 +29,10 @@ extensions:
   - web latency (trace durations) up for requests served by dc1-k8s-wk1 pods, some errors/retries
   - interface counters normal-looking; the symptom is in the app and in TCP retransmissions
   - netem is applied on the container side of dc1-leaf3 eth1 (Ethernet1), egress
+  detect:
+  - signal: web_latency_up
+    label: web p95 latency up 1.5x on dc1-k8s-wk1
+    node_prefix: dc1-k8s-wk1
 controls:
 - name: chaoslab
   provider:

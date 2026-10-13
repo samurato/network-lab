@@ -29,6 +29,11 @@ extensions:
   - 'dc1-leaf3: BGP session to dc1-k8s-wk1 (10.10.40.3) resets'
   - pod CIDR 10.11.1.0/24 and VIP /32s withdrawn then re-advertised
   - 'Kubernetes event: cilium pod recreated'
+  detect:
+  - signal: bgp_down
+    label: dc1-leaf3 BGP session to dc1-k8s-wk1 resets
+    device: dc1-leaf3
+    peer: 10.10.40.3
 controls:
 - name: chaoslab
   provider:

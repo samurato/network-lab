@@ -28,6 +28,9 @@ extensions:
   - 'Kubernetes: coredns deployment 0/0, scaling event'
   - in-cluster lookups (iperf3-dc2, db.prod) fail; external VIP traffic unaffected
   - no network symptom at all
+  detect:
+  - signal: web_errors
+    label: web 5xx errors (Redis lookup fails)
 controls:
 - name: chaoslab
   provider:

@@ -29,6 +29,22 @@ extensions:
   - 'OSPF routes on dc1-leaf1 lose the next hop via Ethernet1 (logs-gnmi.state: route next-hop changes)'
   - traffic counters shift to dc1-leaf1 Ethernet2 (dc1-spine2)
   - no BGP session loss, web unaffected
+  detect:
+  - signal: port_down
+    label: dc1-leaf1 Ethernet1 down
+    device: dc1-leaf1
+    interface: Ethernet1
+  - signal: port_down
+    label: dc1-spine1 Ethernet1 down (far end)
+    device: dc1-spine1
+    interface: Ethernet1
+  - signal: lldp_lost
+    label: LLDP neighbour lost on dc1-leaf1 Ethernet1
+    device: dc1-leaf1
+    interface: Ethernet1
+  - signal: routes_withdrawn
+    label: routes withdrawn on dc1-leaf1
+    device: dc1-leaf1
 controls:
 - name: chaoslab
   provider:

@@ -28,6 +28,9 @@ extensions:
   - 'Kubernetes event: pod deleted and recreated'
   - possible short VIP /32 withdraw / re-advertise from that node (BGP prefixes on its leaf)
   - brief dip in web traces from that pod
+  detect:
+  - signal: new_web_pod
+    label: a new web pod appears in the traces
 controls:
 - name: chaoslab
   provider:

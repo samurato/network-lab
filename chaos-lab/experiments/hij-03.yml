@@ -29,6 +29,13 @@ extensions:
   - 'web traces still arrive from 198.51.100.11 but responses never reach the client: timeouts, retries'
   - 'asymmetric path: requests in via wan2, replies out via wan1'
   - 'fix direction: PL-WAN-PROD-IN should cap the length (le 24) / validate the origin'
+  detect:
+  - signal: route_change
+    label: 198.51.100.11/32 appears on dc1-bgw1
+    prefix: 198.51.100.11/32
+    device: dc1-bgw1
+  - signal: web_errors
+    label: web errors (replies lost; server spans look fine)
 controls:
 - name: chaoslab
   provider:
