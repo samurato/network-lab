@@ -11,6 +11,10 @@ locals {
       name  = "Fabric telemetry (gnmic)"
       title = "metrics-gnmi.otel-*"
     }
+    netops-state = {
+      name  = "Fabric state changes (gnmic)"
+      title = "logs-gnmi.state.otel-*"
+    }
     netops-traces = {
       name  = "App traces"
       title = "traces-*.otel-*"

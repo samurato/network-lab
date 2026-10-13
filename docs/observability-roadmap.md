@@ -27,17 +27,16 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 
 | Works | Missing |
 |---|---|
-| gnmic → EDOT Collector → Elastic: interface counters, oper-status, BGP state and prefixes, LLDP, CPU and memory, in `metrics-gnmi.otel-default` | Route tables (OpenConfig AFT), OSPF, EVPN/VXLAN, syslog, FRR WAN, hosts |
+| gnmic → EDOT Collector → Elastic: interface counters, oper-status, MTU, BGP state and prefixes, OSPF LSA count, LLDP, memory, in `metrics-gnmi.otel-default` (short `net.*` names, about 1,900 series) | OSPF neighbour state (not in cEOS gNMI), syslog, FRR WAN, hosts |
+| Every route, BGP, port, LLDP, VTEP, VNI and MAC change in `logs-gnmi.state.otel-default` | |
 | The `web` pods' traces, metrics and logs reach Elastic (`traces-generic.otel-default`) | Kubernetes, Cilium, Hubble |
 | `change-event.sh` writes ECS change events to `logs-netops.changes-default` | Context indices (topology, IP map, intent), alert rules, SLOs, dashboards |
 | `elastic/terraform/`: data stream templates, Kibana space `netops`, data views, dashboards | Flows: cEOS sFlow works (step 5 test on dc1-leaf1); no flow collector yet (step 10) |
 | Switches: OpenConfig route tables (AFT) on, clock Australia/Sydney, sFlow test on dc1-leaf1 | Switch syslog: configured, but rsyslog inside cEOS crash-loops on this host, so nothing is sent (step 7) |
 | `make verify` checks freshness in Elastic with ES\|QL | |
 
-**Lab status:** shut down on 2026-10-13 after the PR #10 deploy was verified (switch clocks Australia/Sydney,
-Linux nodes and collector on AEDT, AFT routes over gNMI, `make verify` 0 FAIL). While it is down nothing is sent
-to Elastic; the dashboards, data streams and Terraform state stay. Bring it back with `make up` (about 15 minutes)
-or by merging to `main` (the CI deploy rebuilds it). **Next: Step 6** (gnmic subscriptions).
+**Lab status:** running since 2026-10-13 (brought back with `make up` for Step 6, redeployed for the new telemetry
+binds; `make verify` 0 FAIL). **Next:** the Step 6 withdraw drill, then Step 7 (syslog and FRR WAN telemetry).
 
 The Elastic project is **Serverless, Elasticsearch type** (no Managed OTLP endpoint, no Observability apps).
 The collector writes straight to Elasticsearch and is ready for a Managed OTLP endpoint
@@ -135,18 +134,39 @@ switch syslog reaches the collector. See Step 7.
 
 ### Step 6 – gnmic subscriptions
 In `automation/telemetry/gnmic.base.yml`:
-- [ ] **Add:**
-  - AFT routes and next-hops for each VRF (on change);
-  - OSPF neighbours (`eos_native:/Sysdb/routing/ospf/status`, on change);
-  - EVPN/VXLAN: VTEPs, VNIs, MAC counts (30s);
-  - sub-interface IPv4 MTU (300s).
-- [ ] **Drop:** per-core CPU. Keep only the average.
-- [ ] **Rename:** to short names (`net.if.in.octets`, `net.bgp.session_state`, …) in the existing `event-starlark` processor, keeping the original path as an attribute.
-- [ ] **Second output:** route, BGP, OSPF and LLDP *changes* go as JSON events to a file, which the collector reads with its `filelog` receiver into `logs-gnmi.state`.
+- [x] **Add:**
+  - AFT routes, next-hop groups and next hops for each VRF, IPv4 and IPv6 (on change; state stream only);
+  - EVPN/VXLAN: remote VTEPs (`eos_native:/Sysdb/vxlan/remoteVtepHwConfig`), VNI mappings (`arista-vxlan`),
+    MAC table (`eos_native:/Smash/bridging/status/smashFdbStatus`), on change, state stream only;
+  - sub-interface IPv4 MTU (300 s) → `net.if.ipv4_mtu`;
+  - OSPF: **neighbour state is not available over gNMI on cEOS 4.36** (OpenConfig `ospfv2` is config only, the
+    EOS-native status has no neighbour table). Instead: the LSA count (`net.ospf.lsa_count`, 30 s) and OSPF routes
+    in the AFT state documents, where a lost adjacency shows as withdrawn routes;
+  - MAC counts are an ES|QL aggregation over the MAC state documents, not a metric.
+- [x] **Drop:** CPU entirely, not just per core. cEOS reports the lab host's 64 cores for every switch, so there is no
+  switch CPU to average; per-switch CPU comes from container stats (Step 12). Also dropped:
+  `counters/last-update`, and BGP `best-paths`, `best-ecmp-paths`, `received-pre-policy` (series budget).
+- [x] **Rename:** short names (`net.if.in_octets`, `net.bgp.session_state`, `net.bgp.prefixes.received`, …) in the
+  `names` Starlark processor; anything not in the catalogue is dropped. Notes:
+  - `in` is an ES|QL keyword, so `net.if.in.octets` would need backticks everywhere: names use `in_` / `out_`;
+  - the original gNMI path is **not** a per-datapoint attribute: gnmic sends several values per event and tags
+    are per event, so a path attribute would split every TSDS document into one per metric. The path of every
+    name is in the catalogue ([telemetry.md § Metrics](telemetry.md#metrics)); `subscription-name` stays on each
+    datapoint;
+  - naming decided 2026-10-13: short custom `net.*` names and gnmic's key names, over the OpenTelemetry
+    hardware conventions (`hw.network.io` + `network.io.direction`). Data streams and templates follow
+    Elastic's convention (`<type>-<dataset>.otel-<namespace>`, built-in OTel templates).
+- [x] **Second output:** route, BGP, LLDP, port, VTEP, VNI and MAC *changes* as JSON lines in
+  `telemetry/state/gnmi-state.json` (a folder both containers bind; gnmic runs as the collector's uid). The
+  collector's `file_log` receiver reads it into `logs-gnmi.state.otel-default` (logsdb, 30 days, Terraform
+  template). One document per change, `op` = `update` / `delete`, the device's change time as `@timestamp`.
+  (The EDOT Collector has no TCP log receiver, hence the file.)
+- [x] Dashboard: *Fabric health* has a state-changes table; data view *Fabric state changes (gnmic)*;
+  `make verify` checks that every switch has state documents.
 
 **Done when:**
-- ES|QL on `logs-gnmi.state` shows a route withdraw/add when you shut a leaf uplink;
-- series count is under 2.5k.
+- ES|QL on `logs-gnmi.state` shows a route withdraw/add when you shut a leaf uplink; **pending: drill to run**;
+- series count is under 2.5k. ✔ 1,897 (was about 3,600).
 
 ### Step 7 – Syslog receiver and FRR WAN telemetry
 - [ ] Collector: add the `syslog` receiver (UDP 514) → `logs-syslog.otel-*`.
@@ -281,6 +301,7 @@ RFC 3164 senders.
 ## Progress log
 | Date | Step | PR | Notes |
 |---|---|---|---|
+| 2026-10-13 | 6 | (this PR) | gnmic: AFT routes, EVPN/VXLAN, MTU, OSPF LSA count; CPU dropped; short `net.*` names; state changes → `logs-gnmi.state` via a shared file and `file_log`. 1,897 series (was ~3,600). Found: no OSPF neighbour state over gNMI on cEOS 4.36; `in` is an ES\|QL keyword; logsdb hides a record-level `host.name` (moved to the resource). `make verify` 0 FAIL |
 | 2026-10-13 | – | – | Lab shut down. Next: Step 6. Open: cEOS rsyslog crash loop (step 7), leftover `metrics-prometheusreceiver.otel-default` data stream from the first test |
 | 2026-10-13 | 5 + timezone | #10 | AFT on, syslog configured (blocked by cEOS rsyslog loop), sFlow works on cEOS (dc1-leaf1 test), Australia/Sydney on every device. CI deploy verified: topology redeploy, collector profile `elastic`, change event in Elastic, `make verify` 0 FAIL |
 | 2026-10-12 | 16 (part) | #9 | Dashboards as code: Fabric health, Web app, Pipeline & changes (ES\|QL panels, `config_json` in the Kibana API shape) |

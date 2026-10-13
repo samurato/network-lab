@@ -1,7 +1,13 @@
-# gnmic collector (hand-maintained base): Arista cEOS OpenConfig paths -> OTLP -> otelcol (-> Elastic),
-# plus a Prometheus output on :9464 that is only a local debug tap (curl localhost:9464/metrics on the lab host).
+# gnmic collector (hand-maintained base): Arista cEOS gNMI -> two streams for Elastic, plus a local debug tap.
+#   otel   metrics (OTLP -> collector -> metrics-gnmi.otel-*): counters, gauges and enum states, short names (net.*)
+#   state  every route / BGP / LLDP / oper-status / VTEP / VNI / MAC change as one JSON event per line in
+#          /var/lib/netops-state/gnmi-state.json; the collector tails it into logs-gnmi.state.otel-*
+#   prom   local debug tap only on :9464 (curl localhost:9464/metrics on the lab host); same names as otel,
+#          with Prometheus underscores (gnmi_net_if_in_octets)
+# Every subscription names its outputs: state-only subscriptions (routes, MACs) must not become metrics.
 # automation/render.py adds a per-device "used-ports" filter and writes containerlab/telemetry/gnmic/gnmic.yml.
 # Credentials: GNMIC_USERNAME / GNMIC_PASSWORD env, set in netops.clab.yml from EOS_USER / EOS_PASSWORD (default admin).
+# Metric catalogue (short name <- gNMI path) and the state document fields: docs/telemetry.md.
 encoding: json_ietf
 log: true
 loader:
@@ -10,35 +16,98 @@ loader:
   interval: 30s
 
 subscriptions:
+  # ---- metrics
   if-counters:
     paths:
       - /interfaces/interface/state/counters
     stream-mode: sample
     sample-interval: 10s
-  if-state:
+    outputs:
+      - otel
+      - prom
+  if-mtu:
     paths:
-      - /interfaces/interface/state/oper-status
-    stream-mode: on-change
-  bgp-state:
-    paths:
-      - /network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state/session-state
-    stream-mode: on-change
+      - /interfaces/interface/subinterfaces/subinterface/ipv4/state/mtu
+    stream-mode: sample
+    sample-interval: 300s
+    outputs:
+      - otel
+      - prom
   bgp-prefixes:
     paths:
       - /network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/afi-safis/afi-safi/state/prefixes
     stream-mode: sample
     sample-interval: 30s
+    outputs:
+      - otel
+      - prom
+  # cEOS reports the lab host's cores (CPU0..CPU63) for every switch, not the switch: no CPU here.
+  # Per-switch CPU comes from the container stats (roadmap Step 12).
   platform:
     paths:
-      - /components/component/cpu/utilization/state/instant
       - /components/component/state/memory
     stream-mode: sample
     sample-interval: 30s
+    outputs:
+      - otel
+      - prom
+  # cEOS 4.36 has no OSPF neighbour state over gNMI (OpenConfig ospfv2 is config only); the LSA count moves
+  # with every topology change, and lost adjacencies show up as withdrawn OSPF routes in the state stream.
+  ospf:
+    paths:
+      - eos_native:/Sysdb/routing/ospf/status
+    stream-mode: sample
+    sample-interval: 30s
+    outputs:
+      - otel
+      - prom
+  # ---- metrics and state: a gauge to threshold on, plus the change history
+  if-state:
+    paths:
+      - /interfaces/interface/state/oper-status
+    stream-mode: on-change
+    outputs:
+      - otel
+      - prom
+      - state
+  bgp-state:
+    paths:
+      - /network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state/session-state
+    stream-mode: on-change
+    outputs:
+      - otel
+      - prom
+      - state
   lldp:
     paths:
       - /lldp/interfaces/interface/neighbors/neighbor/state/system-name
       - /lldp/interfaces/interface/neighbors/neighbor/state/port-id
     stream-mode: on-change
+    outputs:
+      - otel
+      - prom
+      - state
+  # ---- state only
+  # OpenConfig AFT (needs `provider aft`, network/group_vars/FABRIC/management.yml): every VRF's routes, and the
+  # next-hop groups / next-hops they point to (route -> next_hop_group -> next-hop index -> ip_address, interface).
+  aft:
+    paths:
+      - /network-instances/network-instance/afts/ipv4-unicast/ipv4-entry/state
+      - /network-instances/network-instance/afts/ipv6-unicast/ipv6-entry/state
+      - /network-instances/network-instance/afts/next-hop-groups/next-hop-group
+      - /network-instances/network-instance/afts/next-hops/next-hop
+    stream-mode: on-change
+    outputs:
+      - state
+  evpn:
+    paths:
+      - eos_native:/Sysdb/vxlan/remoteVtepHwConfig/vtepConfig    # remote VTEPs (show vxlan vtep)
+      - /interfaces/interface[name=Vxlan1]/arista-vxlan/vlan-to-vnis
+      - /interfaces/interface[name=Vxlan1]/arista-vxlan/vrf-to-vnis
+      - eos_native:/Smash/bridging/status/smashFdbStatus           # MAC table: learn, move, age out
+    stream-mode: on-change
+    outputs:
+      - state
 
 processors:
   # cEOS keeps the device timestamp of a value that has not changed, so an idle counter would be re-sent with the
@@ -46,47 +115,185 @@ processors:
   now:
     event-override-ts:
       precision: ns              # OTLP timestamps are nanoseconds; "ms" would land the data in 1970
-  # OpenConfig enums -> numbers so each state is ONE time series the agent can threshold on.
-  #   oper-status: UP=1, anything else=0      session-state: BGP FSM IDLE=1 .. ESTABLISHED=6
-  states:
+  # Metric names: gNMI path -> short dotted name (the catalogue is docs/telemetry.md). Anything not in the
+  # catalogue is dropped, which keeps the series count bounded. OpenConfig enums become numbers so each state
+  # is ONE time series the agent can threshold on:
+  #   net.if.oper_status: UP=1, anything else=0      net.bgp.session_state: BGP FSM IDLE=1 .. ESTABLISHED=6
+  names:
     event-starlark:
       source: |
+        NAMES = {
+          "/interfaces/interface/state/oper-status": "net.if.oper_status",
+          "/interfaces/interface/subinterfaces/subinterface/ipv4/state/mtu": "net.if.ipv4_mtu",
+          "/network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/state/session-state": "net.bgp.session_state",
+          "/components/component/state/memory/available": "net.mem.available",
+          "/components/component/state/memory/utilized": "net.mem.utilized",
+          "/lldp/interfaces/interface/neighbors/neighbor/state/system-name": "net.lldp.neighbor.system_name",
+          "/lldp/interfaces/interface/neighbors/neighbor/state/port-id": "net.lldp.neighbor.port_id",
+        }
+        COUNTERS = "/interfaces/interface/state/counters/"
+        PREFIXES = "/network-instances/network-instance/protocols/protocol/bgp/neighbors/neighbor/afi-safis/afi-safi/state/prefixes/"
+        OSPF = "/Sysdb/routing/ospf/status/"
         OPER = {"UP": 1}
         BGP = {"IDLE": 1, "CONNECT": 2, "ACTIVE": 3, "OPENSENT": 4, "OPENCONFIRM": 5, "ESTABLISHED": 6}
+
+        def plain_path(p):       # drop YANG module / origin prefixes: "eos_native:/a/openconfig-x:b" -> "/a/b"
+          return "/".join([s.split(":")[-1] for s in p.split("/")])
+
+        def short(p):
+          if p in NAMES:
+            return NAMES[p]
+          if p.startswith(COUNTERS):
+            leaf = p[len(COUNTERS):]
+            if leaf == "last-update":
+              return None
+            return "net.if." + leaf.replace("-", "_")   # net.if.in_octets ("in" alone is an ES|QL keyword)
+          if p.startswith(PREFIXES):   # best-paths, best-ecmp-paths, received-pre-policy: not kept (series budget)
+            leaf = p[len(PREFIXES):]
+            if leaf in ["received", "installed", "sent"]:
+              return "net.bgp.prefixes." + leaf
+            return None
+          if p.startswith(OSPF) and p.endswith("/numLsa"):
+            return "net.ospf.lsa_count"
+          return None
+
         def apply(*events):
           for e in events:
+            values = {}
             for k, v in e.values.items():
-              if type(v) != "string":
+              p = plain_path(k)
+              n = short(p)
+              if n == None:
                 continue
-              if k.endswith("oper-status"):
-                e.values[k] = OPER.get(v, 0)
-              elif k.endswith("session-state"):
-                e.values[k] = BGP.get(v, 0)
+              if n == "net.if.oper_status" and type(v) == "string":
+                v = OPER.get(v, 0)
+              elif n == "net.bgp.session_state" and type(v) == "string":
+                v = BGP.get(v, 0)
+              elif n == "net.ospf.lsa_count":   # /Sysdb/routing/ospf/status/<vrf>/instanceStatus/<instance>/numLsa
+                parts = p.split("/")
+                e.tags["network-instance_name"] = parts[5]
+                e.tags["ospf_instance"] = parts[7]
+              values[n] = v
+            e.values = values
           return events
   numbers:
     event-convert:
-      value-names: [".*"]
+      value-names:
+        - ".*"
       type: float
+  # State documents: one event per changed entity (route, next hop, neighbour, VTEP, MAC ...); EOS sends most
+  # leaves in their own notification, so one route is a few documents sharing its keys. Keys stay as tags
+  # (ipv4-entry_prefix, neighbor_neighbor-address, ...), values become state.<leaf>, and op says update or
+  # delete (a gNMI delete = route withdrawn, MAC aged out, peer gone). The timestamp stays the device's:
+  # the time of the change (Elastic keeps the collection time as observed_timestamp).
+  # EOS-native tables carry the entry key inside the path (.../smashFdbStatus/<mac>_<fid>/intf), so their
+  # notifications are split into one event per entry, with the key as a tag.
+  state-docs:
+    event-starlark:
+      source: |
+        TABLES = {
+          "eos_native:/Sysdb/vxlan/remoteVtepHwConfig/vtepConfig/": "vtep",
+          "eos_native:/Smash/bridging/status/smashFdbStatus/": "mac",
+        }
+
+        def leaf(p):
+          return "state." + p.split("/")[-1].split(":")[-1].replace("-", "_")
+
+        def plain(v):
+          if type(v) == "dict" and "value" in v:   # EOS-native numbers come wrapped: {"value": 1006}
+            v = v["value"]
+          if type(v) == "int" and (v > 9007199254740991 or v < -9007199254740991):
+            return str(v)        # 64-bit AFT ids: past a double's precision and Elasticsearch's long
+          if type(v) in ["dict", "list"]:
+            return str(v)
+          return v
+
+        def table_entry(p):      # -> (kind, entry, field) for an EOS-native table path, else None
+          for root, kind in TABLES.items():
+            if p.startswith(root):
+              rest = p[len(root):].split("/")
+              return (kind, rest[0], "_".join(rest[1:]))
+          return None
+
+        def entry_tags(tags, kind, entry):
+          t = {k: v for k, v in tags.items()}
+          if kind == "mac":      # <mac>_<fid>; the fid is the VLAN for a bridged VLAN
+            t["mac"] = entry.rsplit("_", 1)[0]
+            t["fid"] = entry.rsplit("_", 1)[-1]
+          else:
+            t[kind] = entry
+          return t
+
+        def apply(*events):
+          out = []
+          for e in events:
+            values = {}
+            entries = {}
+            for k, v in e.values.items():
+              te = table_entry(k)
+              if te == None:
+                values[leaf(k)] = plain(v)
+              else:
+                entries.setdefault((te[0], te[1]), {})["state." + te[2]] = plain(v)
+            deletes = []
+            for d in e.deletes:
+              te = table_entry(d)
+              if te == None:
+                deletes.append(d)
+              else:
+                t = entry_tags(e.tags, te[0], te[1])
+                t["op"] = "delete"
+                out.append(Event(e.name, timestamp=e.timestamp, tags=t, deletes=[d]))
+            for key, vals in entries.items():
+              t = entry_tags(e.tags, key[0], key[1])
+              t["op"] = "update"
+              out.append(Event(e.name, timestamp=e.timestamp, tags=t, values=vals))
+            if values or deletes:
+              e.values = values
+              e.deletes = deletes
+              e.tags["op"] = "delete" if deletes else "update"
+              out.append(e)
+          return out
 
 outputs:
   otel:
     type: otlp
     endpoint: 172.20.20.250:4317
     protocol: grpc
-    metric-prefix: gnmi
     strip-leading-underscore: true
     strings-as-attributes: true
-    resource-tag-keys: [source, site, role, vendor]
+    resource-tag-keys:
+      - source
+      - site
+      - role
+      - vendor
     counter-patterns:
       - "octets|pkts|packets|errors|discards|drops|messages"
-    event-processors: [now, states, numbers]
+    event-processors:
+      - names
+      - now
+      - numbers
     resource-attributes:
       service.name: gnmic
       deployment.environment: hackathon
+  state:
+    type: file
+    filename: /var/lib/netops-state/gnmi-state.json
+    format: event
+    split-events: true           # one JSON event per line
+    rotation:
+      max-size: 20               # MB; the collector follows the rotation
+      max-backups: 2
+      max-age: 7
+    event-processors:
+      - state-docs
   prom:                          # local debug tap only; Elastic gets the OTLP output above
     type: prometheus
     listen: :9464
     path: /metrics
     metric-prefix: gnmi
     strings-as-labels: true
-    event-processors: [now, states, numbers]
+    event-processors:
+      - names
+      - now
+      - numbers
