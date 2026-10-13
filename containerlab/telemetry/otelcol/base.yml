@@ -52,6 +52,44 @@ receivers:
       - type: move
         from: attributes.tags.vendor
         to: resource["vendor"]
+  file_log/bmp:                  # pmbmpd's BMP feed from the WAN routers (one JSON object per BMP message)
+    include:
+      - /var/lib/netops-state/bmp*.json
+    start_at: beginning
+    storage: file_storage/state
+    retry_on_failure:
+      enabled: true
+    operators:
+      - type: json_parser
+      - type: filter             # pmbmpd's own file markers, not BMP messages
+        expr: 'attributes.event_type in ["log_init", "log_close"]'
+      - type: time_parser        # when the collector received it; the router's own stamp stays in bmp.router_timestamp
+        if: 'attributes.timestamp_arrival != nil'
+        parse_from: attributes.timestamp_arrival
+        layout_type: epoch
+        layout: s.us
+      # bmp_router is the router's management address (network/wan.yml mgmt_ip): name it, as on the switches.
+      - type: add
+        if: 'attributes.bmp_router == "172.20.20.41"'
+        field: resource["host.name"]
+        value: wan1
+      - type: add
+        if: 'attributes.bmp_router == "172.20.20.42"'
+        field: resource["host.name"]
+        value: wan2
+      - type: copy
+        if: 'resource["host.name"] != nil'
+        from: resource["host.name"]
+        to: resource["device"]
+      - type: add
+        field: resource["site"]
+        value: wan
+      - type: add
+        field: resource["role"]
+        value: wan
+      - type: add
+        field: resource["vendor"]
+        value: frr
   prometheus/self:               # the collector's own metrics (queue size, refused / failed sends)
     config:
       scrape_configs:
@@ -83,6 +121,22 @@ processors:
           - set(attributes["data_stream.dataset"], "gnmi.state")
           - set(body, Concat([resource.attributes["host.name"], attributes["subscription-name"], attributes["op"]], " "))
           - delete_matching_keys(attributes, "^(tags|values|deletes|name|timestamp|source|log\\.file\\.name)$")
+  transform/bmp:                 # one BMP message -> one flat log record in logs-bgp.bmp.otel-*
+    error_mode: ignore
+    log_statements:
+      - context: log
+        conditions:
+          - attributes["log.file.name"] != nil and IsMatch(attributes["log.file.name"], "^bmp")
+        statements:
+          - set(attributes["data_stream.dataset"], "bgp.bmp")
+          - set(attributes["peer_asn"], Int(attributes["peer_asn"])) where attributes["peer_asn"] != nil
+          - set(attributes["med"], Int(attributes["med"])) where attributes["med"] != nil
+          - set(attributes["bmp.router_timestamp"], attributes["timestamp"]) where attributes["timestamp"] != nil
+          - set(body, Concat([resource.attributes["host.name"], attributes["bmp_msg_type"]], " "))
+          - set(body, Concat([resource.attributes["host.name"], attributes["log_type"], attributes["ip_prefix"], "as_path", attributes["as_path"], "rib", attributes["bmp_rib_type"]], " ")) where attributes["bmp_msg_type"] == "route_monitor" and attributes["as_path"] != nil
+          - set(body, Concat([resource.attributes["host.name"], attributes["log_type"], attributes["ip_prefix"], "rib", attributes["bmp_rib_type"]], " ")) where attributes["bmp_msg_type"] == "route_monitor" and attributes["as_path"] == nil
+          - set(body, Concat([resource.attributes["host.name"], attributes["bmp_msg_type"], "peer", attributes["peer_ip"], "AS", Format("%d", [attributes["peer_asn"]])], " ")) where IsMatch(attributes["bmp_msg_type"], "^peer_")
+          - delete_matching_keys(attributes, "^(seq|event_type|rd_origin|timestamp|timestamp_arrival|bmp_router_port|log\\.file\\.name)$")
   transform/contract:            # data contract: every signal carries host.name (+ device) and lab
     metric_statements:
       - context: resource
@@ -141,9 +195,11 @@ service:
       receivers:
         - otlp
         - file_log/gnmi_state
+        - file_log/bmp
       processors:
         - memory_limiter
         - transform/gnmi_state
+        - transform/bmp
         - transform/contract
       exporters:
         - debug
