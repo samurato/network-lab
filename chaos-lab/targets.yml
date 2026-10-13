@@ -1,0 +1,101 @@
+# The netops lab as chaos-lab sees it. chaos-lab is separate infrastructure: it only reaches the lab through
+# its management addresses (eAPI), `docker exec`, `containerlab tools netem` and kubectl, and installs nothing.
+#
+# The deny section is enforced in code (chaoslab/guard.py) for every action, dry run or not.
+# Telemetry (gnmic -> otelcol -> Kafka -> Elastic) runs on the management network, so faults touch only
+# fabric data-plane interfaces and routing config, never a telemetry node or a management interface.
+
+lab:
+  container_prefix: clab-netops-
+  kubeconfig: ~/.kube/netops.yaml
+  kubectl: ~/.local/bin/kubectl
+  containerlab: containerlab
+  lock: ~/clab-runs/.netops.lock        # the netops lab's host lock (deploys hold it); never held during a hold
+
+limits:
+  max_load: 48                          # 1-min load average on the 64-vCPU host; above this, refuse to start
+  lock_wait_seconds: 120                # wait this long for a deploy to release the lab lock
+  recovery_seconds: 300                 # after rollback, the steady state must come back within this
+  default_hold_seconds: 300             # fault window (the agent works here); override: CHAOSLAB_HOLD
+
+# Arista cEOS switches, eAPI over HTTPS on the management address.
+# Credentials: EOS_USER / EOS_PASSWORD from the environment (the lab default is admin / admin).
+eos:
+  dc1-spine1: 172.20.20.11
+  dc1-spine2: 172.20.20.12
+  dc1-leaf1: 172.20.20.13
+  dc1-leaf2: 172.20.20.14
+  dc1-leaf3: 172.20.20.15
+  dc1-leaf4: 172.20.20.16
+  dc1-bgw1: 172.20.20.17
+  dc1-bgw2: 172.20.20.18
+  dc2-spine1: 172.20.20.21
+  dc2-spine2: 172.20.20.22
+  dc2-leaf1: 172.20.20.23
+  dc2-leaf2: 172.20.20.24
+  dc2-bgw1: 172.20.20.25
+  dc2-bgw2: 172.20.20.26
+
+# FRR WAN routers, configured with vtysh through docker exec.
+frr:
+  - wan1
+  - wan2
+
+# Linux nodes chaos-lab may impair (netem on fabric links) or run tools in.
+linux:
+  - dc1-web1
+  - dc1-web2
+  - dc1-app1
+  - dc1-app2
+  - dc1-stretch1
+  - dc2-db1
+  - dc2-db2
+  - dc2-stretch1
+  - attacker1
+  - inet-k6
+  - dc1-k8s-cp1
+  - dc1-k8s-wk1
+  - dc1-k8s-wk2
+  - dc2-k8s-cp2
+  - dc2-k8s-wk3
+  - wan-k8s-cp3
+
+# Elastic, with the lab key (ELASTIC_API_KEY): chaos-lab appends its runs to logs-chaos.* (Chaos command center)
+# and reads telemetry for the detection scorecard. Steady state never uses Elastic.
+elastic:
+  env_file: ../automation/elastic.env     # git-ignored; environment variables win
+  secrets_dir: ~/clab-runs/netops-bundle/telemetry/otelcol/secrets
+
+probes:
+  client: inet-k6                       # an Internet user behind wan2
+  url: http://192.0.2.10/health         # the public VIP
+  attempts: 10
+  min_success: 0.9
+  hijack_marker: HIJACKED
+  web:
+    namespace: prod
+    deployment: web
+
+deny:
+  nodes:                                # telemetry path: never targeted
+    - otelcol
+    - gnmic
+    - kafka
+  interfaces:                           # regex; management interfaces carry telemetry and access
+    - "^eth0$"
+    - "^[Mm]a(nagement)?[0-9]"
+  prefixes:                             # never injected, hijacked or routed by an experiment
+    - 172.20.20.0/24
+  eos_config:                           # regex on each config line sent to a switch
+    - "^\\s*management\\b"
+    - "^\\s*username\\b"
+    - "^\\s*aaa\\b"
+    - "^\\s*daemon\\b"
+    - "^\\s*logging\\b"
+    - "MGMT"
+    - "[Mm]anagement[0-9]"
+  namespaces:                           # regex
+    - "otel"
+    - "elastic"
+    - "observability"
+    - "monitoring"

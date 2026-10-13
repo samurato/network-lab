@@ -52,6 +52,7 @@ The web app answers on **192.0.2.10** (public, from the WAN) and **10.99.0.10** 
 | [Cilium](docs/cilium.md) | the pod network: native routing, BGP to the leaves, VIPs, Hubble, troubleshooting |
 | [Kubernetes guide](docs/kubernetes-guide.md) | operating the cluster: nodes, Cilium, BGP, VIP pools, upgrades |
 | [Developer guide](docs/developer-guide.md) | deploying and exposing an app, step by step |
+| [Chaos lab](chaos-lab/README.md) | fault injection (network, WAN route hijacks, Kubernetes) for testing the agent; its own Makefile |
 
 ## The repository
 
@@ -66,6 +67,8 @@ containerlab/   build output: the deployable lab bundle (topology, startup confi
                 except static/ and telemetry/otelcol/.
 elastic/        YOU EDIT: everything inside the Elastic project (terraform/: templates, space, data views, dashboards)
 automation/     tooling: render.py, Ansible playbooks/roles, lab + k8s helpers, verify.sh, CI scripts
+chaos-lab/      self-contained chaos engineering (Chaos Toolkit): experiments, drivers, own Makefile.
+                Reaches the lab from outside, never touches telemetry. Run it from that folder.
 .github/        workflows (plan, deploy, drift) and CODEOWNERS
 Makefile        every command (make help)
 ```

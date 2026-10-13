@@ -1,0 +1,4 @@
+chaostoolkit==1.21.4
+chaostoolkit-lib==1.45.1
+PyYAML==6.0.3
+requests==2.34.2

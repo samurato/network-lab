@@ -1,0 +1,142 @@
+"""Publish chaos-lab runs to Elastic for the Chaos command center dashboard (Kibana space "chaos"), with the
+lab key. Append-only data streams; the dashboard takes the latest document per run:
+
+  logs-chaos.events-default       timeline: run.start, fault.inject, fault.rollback, run.end, traffic.*
+  logs-chaos.runs-default         a run snapshot at start (status "running") and at the end
+  logs-chaos.signals-default      the detection scorecard: one document per expected signal per scoring
+  logs-chaos.experiments-default  the catalogue
+
+The local runs.jsonl stays the source of truth: publishing never blocks or fails a run, and
+`python -m chaoslab.publish` (make publish) re-sends the catalogue and every recorded run.
+"""
+import datetime
+import logging
+
+from chaoslab import elastic, state
+
+log = logging.getLogger("chaostoolkit")
+_warned = False
+EVENTS = "logs-chaos.events-default"
+RUNS = "logs-chaos.runs-default"
+SIGNALS = "logs-chaos.signals-default"
+EXPERIMENTS = "logs-chaos.experiments-default"
+
+
+def _send(actions: list) -> None:
+    global _warned
+    if not elastic.can_write():
+        if not _warned:
+            log.info("chaoslab: no Elastic URL / API key, not publishing to Elastic")
+            _warned = True
+        return
+    try:
+        elastic.bulk(actions)
+    except Exception as e:
+        log.warning(f"chaoslab: publishing to Elastic failed (the run is unaffected): {e}")
+
+
+def _layer(experiment: str) -> str | None:
+    from chaoslab.cli import experiments
+    e = experiments().get(experiment)
+    return e[2].get("layer") if e else None
+
+
+def _run_fields(run: dict) -> dict:
+    return {
+        "run_id": run["run_id"],
+        "experiment": run["experiment"],
+        "title": run.get("title"),
+        "fault": run.get("fault"),
+        "layer": run.get("layer") or _layer(run["experiment"]),   # runs recorded before layer was kept
+    }
+
+
+def event(action: str, run: dict | None = None, **fields) -> None:
+    doc = {"@timestamp": state.now(), "event": {"action": action}, **(_run_fields(run) if run else {}), **fields}
+    _send([({"create": {"_index": EVENTS}}, doc)])
+
+
+def run_doc(run: dict, batch: str) -> dict:
+    sc = run.get("scorecard") or {}
+    total = sc.get("total")
+    return {
+        "@timestamp": batch,
+        "started": run["started"],
+        **_run_fields(run),
+        "status": run.get("status", "running"),
+        "targets": run.get("targets", []),
+        "injected": [i["what"] for i in run.get("injected", [])],
+        "expected": run.get("expected", []),
+        "hold_s": run.get("hold_seconds"),
+        "ended": run.get("ended"),
+        "recovered": run.get("recovered"),
+        "recovery_s": run.get("recovery_seconds"),
+        "detected": sc.get("detected"),
+        "total": total,
+        "detection_pct": round(100.0 * sc["detected"] / total, 1) if total else None,
+    }
+
+
+def _batch_time() -> str:
+    """One timestamp (ms) for every document of a publish: the dashboard keeps the latest batch per run."""
+    return datetime.datetime.now(datetime.UTC).isoformat(timespec="milliseconds")
+
+
+def signal_docs(run: dict, batch: str) -> list:
+    sc = run.get("scorecard") or {}
+    out = []
+    for s in sc.get("signals", []):
+        out.append(({"create": {"_index": SIGNALS}}, {
+            "@timestamp": batch,
+            "started": run["started"],
+            "scored_at": sc.get("scored_at") or state.now(),
+            **_run_fields(run),
+            "signal": s["signal"],
+            "label": s.get("label"),
+            "detected": bool(s.get("first_seen")),
+            "ttd_s": s.get("ttd_s"),
+            "first_seen": s.get("first_seen"),
+        }))
+    return out
+
+
+def run(run: dict) -> None:
+    """Append a snapshot of the run, and its scorecard rows."""
+    batch = _batch_time()
+    _send([({"create": {"_index": RUNS}}, run_doc(run, batch))] + signal_docs(run, batch))
+
+
+def catalogue() -> None:
+    from chaoslab.cli import experiments
+    actions, batch = [], _batch_time()
+    for eid, (_, exp, ext) in experiments().items():
+        actions.append(({"create": {"_index": EXPERIMENTS}}, {
+            "@timestamp": batch,
+            "experiment": eid,
+            "title": exp["title"],
+            "layer": ext.get("layer"),
+            "fault": ext.get("fault"),
+            "random": bool(ext.get("random")),
+            "blast_radius": ext.get("blast_radius", 1),
+            "signals": len(ext.get("detect", [])),
+            "expected": ext.get("expected", []),
+        }))
+    _send(actions)
+
+
+def main() -> None:
+    if not elastic.can_write():
+        raise SystemExit("no Elastic URL / API key (ELASTIC_ES_URL, ELASTIC_API_KEY in automation/elastic.env)")
+    catalogue()
+    runs = state.history(100000)
+    for r in runs:
+        run(r)
+    cur = state.current()
+    if cur:
+        run(cur)
+    event("catalogue.published", message=f"{len(runs)} run(s) re-sent")
+    print(f"published the catalogue and {len(runs)} run(s){' + the run in progress' if cur else ''} to Elastic")
+
+
+if __name__ == "__main__":
+    main()

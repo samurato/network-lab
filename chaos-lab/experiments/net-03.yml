@@ -1,0 +1,116 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=net-03   Dry run: make dry EXP=net-03
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'Bad route policy: DC1 leaves stop accepting the public VIPs from Kubernetes'
+description: |
+  A policy change removes the public VIP range from PL-K8S-IN on every DC1 leaf with a k8s node. DC1 stops announcing 192.0.2.0/24 /32s, so all Internet traffic lands on DC2 pods: no outage, but half the capacity is gone and DC1 pods go idle.
+tags:
+- chaos-lab
+- network
+- route-policy
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: net-03
+  layer: network
+  fault: route-policy
+  random: true
+  blast_radius: 3
+  extra_seconds: 0
+  targets:
+  - dc1-leaf1
+  - dc1-leaf3
+  - dc1-leaf4
+  expected:
+  - BGP prefixes received from the DC1 k8s nodes drop (net.bgp.prefixes.received / installed)
+  - 192.0.2.10/32 routes from DC1 withdrawn (logs-gnmi.state on the BGWs and WAN)
+  - web traces only from dc2 pods; dc1 web pods receive no requests
+  - 'BGP sessions stay established: a policy fault, not a session fault'
+  detect:
+  - signal: route_change
+    label: public VIP 192.0.2.10/32 route changes on dc1-bgw1
+    prefix: 192.0.2.10/32
+    device: dc1-bgw1
+  - signal: web_requests_drop
+    label: DC1 web pods lose their requests
+    node_prefix: dc1-k8s-
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: drop-vip-from-policy-leaf1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-leaf1
+      commands:
+      - ip prefix-list PL-K8S-IN
+      - no seq 30
+- type: action
+  name: drop-vip-from-policy-leaf3
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-leaf3
+      commands:
+      - ip prefix-list PL-K8S-IN
+      - no seq 30
+- type: action
+  name: drop-vip-from-policy-leaf4
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-leaf4
+      commands:
+      - ip prefix-list PL-K8S-IN
+      - no seq 30
+  pauses:
+    after: 15
+- type: probe
+  name: evidence-dc1-bgw1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: show
+    arguments:
+      node: dc1-bgw1
+      command: show ip route vrf PROD 192.0.2.10
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

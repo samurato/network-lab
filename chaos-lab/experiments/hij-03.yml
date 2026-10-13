@@ -1,0 +1,108 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=hij-03   Dry run: make dry EXP=hij-03
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'More-specific hijack with a forged origin: wan1 announces an Internet user''s /32 as if from AS 64902'
+description: |
+  wan1 announces 198.51.100.11/32 (the k6 Internet user, really behind wan2's 198.51.100.0/24) with AS 64902 prepended so the origin looks legitimate. The BGWs accept host routes from the WAN (PL-WAN-PROD-IN: 198.51.100.0/24 le 32), so the DCs send replies for that user to wan1 -> attacker1. Requests arrive, responses vanish.
+tags:
+- chaos-lab
+- wan
+- route-hijack-more-specific
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: hij-03
+  layer: wan
+  fault: route-hijack-more-specific
+  random: false
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - wan1
+  expected:
+  - BGWs install 198.51.100.11/32 via wan1, AS path 64901 64902 (more specific than the real /24 via wan2)
+  - 'web traces still arrive from 198.51.100.11 but responses never reach the client: timeouts, retries'
+  - 'asymmetric path: requests in via wan2, replies out via wan1'
+  - 'fix direction: PL-WAN-PROD-IN should cap the length (le 24) / validate the origin'
+  detect:
+  - signal: route_change
+    label: 198.51.100.11/32 appears on dc1-bgw1
+    prefix: 198.51.100.11/32
+    device: dc1-bgw1
+  - signal: web_errors
+    label: web errors (replies lost; server spans look fine)
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: announce-user-more-specific
+  provider:
+    type: python
+    module: chaoslab.frr
+    func: configure
+    arguments:
+      node: wan1
+      lines:
+      - route-map CHAOS-FORGE-ORIGIN permit 10
+      - set as-path prepend 64902
+      - exit
+      - vrf PROD
+      - ip route 198.51.100.11/32 203.0.113.66
+      - exit-vrf
+      - router bgp 64901 vrf PROD
+      - address-family ipv4 unicast
+      - network 198.51.100.11/32 route-map CHAOS-FORGE-ORIGIN
+      undo:
+      - router bgp 64901 vrf PROD
+      - address-family ipv4 unicast
+      - no network 198.51.100.11/32
+      - exit-address-family
+      - exit
+      - vrf PROD
+      - no ip route 198.51.100.11/32 203.0.113.66
+      - exit-vrf
+      - no route-map CHAOS-FORGE-ORIGIN permit 10
+  pauses:
+    after: 15
+- type: probe
+  name: evidence-dc1-bgw1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: show
+    arguments:
+      node: dc1-bgw1
+      command: show ip bgp 198.51.100.11/32 vrf PROD
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback
