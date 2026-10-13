@@ -274,7 +274,7 @@ What runs in the cluster today (namespace `prod`):
 
 | Workload | Exposure |
 |---|---|
-| `web`: the colleague's app `chaos2cure/web:2`, 4 replicas spread 2 + 2 over the DCs and one per node (hard spread) | `web-public` 192.0.2.10:80, `web-internal` 10.99.0.10:80 |
+| `web`: the colleague's app `chaos2cure/web:3`, 4 replicas spread 2 + 2 over the DCs and one per node (hard spread) | `web-public` 192.0.2.10:80, `web-internal` 10.99.0.10:80 |
 | `redis`: shared visitor and request counters for `web` (volatile; the app falls back to per-pod counts without it) | ClusterIP `redis.prod` port 6379 |
 | `iperf3-dc1`, `iperf3-dc2`: one iperf3 server per DC | ClusterIP `iperf3-dc1.prod`, `iperf3-dc2.prod` port 5201 |
 | `db`: reserved Service, no backend yet | `db.prod` 5432, future backend VIP 10.20.30.10 |

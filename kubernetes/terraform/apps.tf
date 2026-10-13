@@ -152,7 +152,7 @@ resource "kubernetes_deployment_v1" "web" {
         }
         container {
           name              = "web"
-          image             = "chaos2cure/web:2"
+          image             = "chaos2cure/web:3"
           image_pull_policy = "Never" # loaded into the nodes by nodes.tf
           port {
             name           = "http"

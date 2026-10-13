@@ -26,7 +26,7 @@ resource "terraform_data" "pod_cidr" {
 # Lab-built images that exist only in the host's Docker (e.g. the web app): copy them into each workload
 # node's containerd.  Re-runs when the image changes in Docker.
 locals {
-  local_images = ["chaos2cure/web:2"]
+  local_images = ["chaos2cure/web:3"]
 }
 
 data "external" "image_id" {
