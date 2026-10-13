@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="3">
+<title>Nest Egg - BRANCH OFFLINE</title>
+<style>
+  :root{--bg:#dff3fb;--ink:#10263f;--bad:#e5304f;--card:#fff;--gold:#ffc83d;--muted:#4d6479}
+  @media(prefers-color-scheme:dark){:root{--bg:#081529;--ink:#eef6fc;--bad:#ff7a93;--card:#13294a;--muted:#a9bfd1}}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);
+       font:16px/1.55 ui-rounded,"Avenir Next Rounded","Nunito","Trebuchet MS",system-ui,sans-serif}
+  .siren{position:fixed;inset:0 0 auto 0;height:10px;background:repeating-linear-gradient(90deg,var(--bad) 0 40px,transparent 40px 80px);
+         animation:slide 1s linear infinite}
+  @keyframes slide{to{background-position:80px 0}}
+  main{max-width:560px;margin:24px 16px;padding:28px 26px;border:3px solid var(--bad);border-radius:22px;background:var(--card);
+       text-align:center;box-shadow:0 8px 0 rgba(16,38,63,.12)}
+  h1{margin:6px 0 8px;font-size:clamp(26px,6vw,36px);line-height:1.1;color:var(--bad)}
+  p{margin:8px 0;color:var(--muted)} p b{color:var(--ink)}
+  svg{width:170px;height:auto}
+  .eyes{animation:none}
+  .stars{transform-origin:92px 18px;animation:spin 2s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  small{display:block;margin-top:14px;color:var(--muted)}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style></head><body>
+<div class="siren"></div>
+<main>
+  <svg viewBox="0 0 150 134" role="img" aria-label="Barnaby the banker bird, fainted">
+    <g transform="translate(34 -14) rotate(-78 60 100)">
+      <path d="M18 70 q-26 -8 -17 -34 q18 8 27 30z" fill="#2a8fa8"/>
+      <ellipse cx="58" cy="76" rx="42" ry="30" fill="#3bb2d0"/><ellipse cx="62" cy="86" rx="26" ry="17" fill="#c7effa"/>
+      <circle cx="94" cy="52" r="23" fill="#3bb2d0"/><polygon points="113,50 140,58 113,66" fill="#ffc83d"/>
+      <path d="M46 78 q20 -26 44 -6 q-14 24 -44 6z" fill="#1f7a92"/>
+      <rect x="82" y="12" width="26" height="20" rx="3" fill="#10263f"/><rect x="74" y="29" width="42" height="6" rx="3" fill="#10263f"/>
+      <rect x="82" y="24" width="26" height="4" fill="#ff6f4e"/>
+      <circle cx="101" cy="50" r="9" fill="none" stroke="#ffc83d" stroke-width="2.5"/>
+      <path d="M94 42 l12 12 M106 42 l-12 12" stroke="#10263f" stroke-width="3.5" stroke-linecap="round"/>
+      <path d="M58 104 v12 M74 104 v12" stroke="#ffc83d" stroke-width="4.5" stroke-linecap="round"/>
+    </g>
+    <g class="stars" fill="#ffc83d"><circle cx="40" cy="16" r="3.5"/><circle cx="62" cy="8" r="2.5"/><circle cx="24" cy="30" r="2.5"/></g>
+  </svg>
+  <h1>Oh no. The branch is offline.</h1>
+  <p><b>Nest Egg Savings &amp; Loan</b> cannot be reached.</p>
+  <p>The carrier pigeons have gone on strike somewhere between the routers, and Barnaby has fainted. Your seeds are safe. Probably.</p>
+  <p>Please remain perched. Do not panic. (Panic a little.)</p>
+  <small>Checking again every 3 seconds. This page will reload itself the moment the vault answers.</small>
+</main></body></html>

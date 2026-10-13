@@ -451,7 +451,7 @@ topology:
         site: wan
         role: traffic
         graph-icon: client
-        graph-posX: '682'
+        graph-posX: '637'
         graph-posY: '-170'
       binds:
         - static/generators:/generators:ro
@@ -467,6 +467,8 @@ topology:
         - ip route replace 10.0.0.0/8 via 198.51.100.1 dev eth1
         - ip route replace 192.0.2.0/24 via 198.51.100.1 dev eth1
         - ip route replace 203.0.113.0/24 via 198.51.100.1 dev eth1
+      ports:
+        - 8088:80
       group: server
     attacker1:
       kind: linux
@@ -490,6 +492,20 @@ topology:
         - ip route replace 192.0.2.0/24 via 203.0.113.1 dev eth1
         - ip route replace 198.51.100.0/24 via 203.0.113.1 dev eth1
         - tc qdisc replace dev eth1 root tbf rate 20mbit burst 64kb latency 50ms
+      group: server
+    inet-web:
+      kind: linux
+      image: nginx:1.30.5-alpine
+      network-mode: container:inet-k6
+      labels:
+        site: wan
+        role: traffic
+        graph-icon: client
+        graph-posX: '727'
+        graph-posY: '-170'
+      binds:
+        - static/proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+        - static/proxy/down.html:/usr/share/nginx/html/down.html:ro
       group: server
     otelcol:
       kind: linux
