@@ -495,7 +495,7 @@ topology:
       labels:
         role: telemetry
         graph-icon: controller
-        graph-posX: '682'
+        graph-posX: '555'
         graph-posY: '820'
       binds:
         - telemetry/otelcol:/etc/otelcol:ro
@@ -510,7 +510,7 @@ topology:
       labels:
         role: telemetry
         graph-icon: controller
-        graph-posX: '427'
+        graph-posX: '300'
         graph-posY: '820'
       user: 1000:1000
       binds:
@@ -522,6 +522,38 @@ topology:
       cmd: --config /etc/gnmic/gnmic.yml subscribe
       ports:
         - 9464:9464
+      group: '1'
+    kafka:
+      kind: linux
+      restart-policy: always
+      image: apache/kafka:3.9.1
+      mgmt-ipv4: 172.20.20.252
+      labels:
+        role: telemetry
+        graph-icon: controller
+        graph-posX: '810'
+        graph-posY: '820'
+      binds:
+        - telemetry/kafka-data:/var/lib/kafka/data
+      env:
+        CLUSTER_ID: lNlzRCTERauPXS75JcKNKw
+        KAFKA_NODE_ID: '1'
+        KAFKA_PROCESS_ROLES: broker,controller
+        KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+        KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://172.20.20.252:9092
+        KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+        KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+        KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+        KAFKA_LOG_DIRS: /var/lib/kafka/data
+        KAFKA_NUM_PARTITIONS: '3'
+        KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1'
+        KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '1'
+        KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '1'
+        KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: '0'
+        KAFKA_LOG_RETENTION_HOURS: '24'
+        KAFKA_LOG_RETENTION_BYTES: '2147483648'
+        KAFKA_MESSAGE_MAX_BYTES: '10485760'
+        KAFKA_HEAP_OPTS: -Xms256m -Xmx768m
       group: '1'
   links:
     - endpoints:

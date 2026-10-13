@@ -46,10 +46,11 @@ copy_bundle() {   # in place, never unlink+create: a bind-mounted file must keep
   mkdir -p "$BUNDLE"
   rsync -rltp --inplace --delete --exclude '._*' \
     --exclude /telemetry/otelcol/profile.yml --exclude /telemetry/otelcol/secrets/ \
-    --include /telemetry/state/README.md --exclude '/telemetry/state/*' "$@" "$SRC/" "$BUNDLE/"
-  # gnmic's state file and the collector's offsets live here at runtime: never deleted by a sync, and writable
-  # by both telemetry containers (uid 1000) whoever runs the lab
-  chmod 777 "$BUNDLE/telemetry/state"
+    --include /telemetry/state/README.md --exclude '/telemetry/state/*' \
+    --include /telemetry/kafka-data/README.md --exclude '/telemetry/kafka-data/*' "$@" "$SRC/" "$BUNDLE/"
+  # runtime data (gnmic's state file + collector offsets; the Kafka log): never deleted by a sync, and writable
+  # by the telemetry containers (uid 1000) whoever runs the lab
+  chmod 777 "$BUNDLE/telemetry/state" "$BUNDLE/telemetry/kafka-data"
   collector_profile
 }
 

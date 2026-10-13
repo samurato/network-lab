@@ -118,6 +118,11 @@ if [[ -n ${ELASTIC_ES_URL:-} && -n ${ELASTIC_API_KEY:-} ]]; then
     curl -s -m 20 "$ELASTIC_ES_URL/_query?format=csv" -H "Authorization: ApiKey $ELASTIC_API_KEY" \
       -H 'content-type: application/json' -d "$(jq -nc --arg q "$1" '{query: $q}')" | sed -n 2p | tr -d '\r'
   }
+  # Kafka sits between the collector and Elastic: the forwarders' consumer lag is how far Elastic is behind
+  lag=$(docker exec clab-netops-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
+          --describe --group otelcol-elastic 2>/dev/null | awk '$6 ~ /^[0-9]+$/ {s += $6; n++} END {if (n) print s}')
+  [[ -n $lag && $lag -lt 50000 ]] && ok "kafka: forwarders to Elastic are keeping up (consumer lag $lag messages)" \
+    || bad "kafka: consumer group otelcol-elastic missing or behind (lag: ${lag:-none})"
   ceos=$(yq -r '[.topology.nodes[] | select(.kind=="arista_ceos")] | length' "$TOPO")
   IFS=, read -r docs devs < <(esql 'FROM metrics-gnmi.otel-* | WHERE @timestamp > NOW() - 2 minutes
     | STATS docs = COUNT(*), devices = COUNT_DISTINCT(host.name)')

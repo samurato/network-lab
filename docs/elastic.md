@@ -33,7 +33,8 @@ flowchart LR
     GN -- "Prometheus :9464<br/>(local debug tap)" --> TAP["curl localhost:9464"]
     APP["web pods (k3s)"] -- "OTLP HTTP<br/>traces, metrics, logs" --> OC["EDOT Collector<br/>172.20.20.250"]
   end
-  OC -- "profile elastic:<br/>elasticsearch exporter<br/>+ disk queue" --> ES["Elasticsearch<br/>(Serverless project)"]
+  OC -- "profile elastic:<br/>kafka exporter" --> KF["Kafka<br/>172.20.20.252<br/>(24 h buffer)"]
+  KF -- "kafka receiver<br/>(same collector)<br/>elasticsearch exporter" --> ES["Elasticsearch<br/>(Serverless project)"]
   OC -. "profile elastic-otlp<br/>(later)" .-> MOTLP["Managed OTLP endpoint"]
   MOTLP -.-> ES
   CI["deploy workflow<br/>change-event.sh"] -- "_doc API" --> ES
@@ -45,12 +46,13 @@ flowchart LR
 | Piece | Where | What it does |
 |---|---|---|
 | EDOT Collector | `otelcol` node, image `docker.elastic.co/elastic-agent/elastic-otel-collector:9.5.5` | receives OTLP from gnmic and the web app, adds the data contract, sends to Elastic |
+| Kafka | `kafka` node, image `apache/kafka:3.9.1`, `172.20.20.252:9092` | buffer between the collector and Elastic: one broker (KRaft), topics `otlp_metrics`, `otlp_spans`, `otlp_logs`, 3 partitions, kept 24 h / 2 GB per partition, log in the bundle's `telemetry/kafka-data/` |
 | Collector config | `containerlab/telemetry/otelcol/` | `base.yml` + one profile (`local`, `elastic`, `elastic-otlp`) |
 | Profile + secrets | written by `automation/lab` into the running bundle (`~/clab-runs/netops-bundle/telemetry/otelcol/`) | `profile.yml` and `secrets/` (mode 600) |
 | Settings loader | `automation/elastic-env.sh` | one place that reads the Elastic settings; used by `lab`, `elastic`, `verify.sh`, `change-event.sh` |
 | Terraform | `elastic/terraform/`, run by `automation/elastic` | everything inside the Elastic project |
 | Change events | `automation/change-event.sh` | one document per deploy in `logs-netops.changes-default` |
-| Freshness checks | `automation/verify.sh` (section `== Elastic ==`) | ES\|QL: every switch sent data in the last 2 minutes, collector health, web traces |
+| Freshness checks | `automation/verify.sh` (section `== Elastic ==`) | Kafka consumer lag; ES\|QL: every switch sent data in the last 2 minutes, state documents, collector health, web traces |
 
 ---
 
@@ -109,7 +111,7 @@ CI `converge`):
 | Profile | Chosen when | Exports to |
 |---|---|---|
 | `local` | `ELASTIC_API_KEY` empty | nothing; `debug` exporter only |
-| `elastic` | `ELASTIC_API_KEY` and `ELASTIC_ES_URL` set | `elasticsearch/elastic`: Elasticsearch bulk API, OTel-native mapping, disk-backed queue |
+| `elastic` | `ELASTIC_API_KEY` and `ELASTIC_ES_URL` set | `kafka/out` → Kafka → `kafka/elastic` → `elasticsearch/elastic` (Elasticsearch bulk API, OTel-native mapping), all in the one collector |
 | `elastic-otlp` | `ELASTIC_API_KEY` and `ELASTIC_OTLP_ENDPOINT` set (wins over `elastic`) | `otlp_http/elastic` with `Authorization: ApiKey …`, disk-backed queue |
 
 How the secrets reach the collector:
@@ -126,10 +128,37 @@ plain `containerlab deploy` of the bundle works and exports nothing.
 
 ---
 
-**Export queue** (`elastic` profile): `sending_queue` on disk (`file_storage/queue`), sized in items (200,000),
-`block_on_overflow: true` so a full queue slows the receivers instead of dropping data, and batches flushed every
-second (1,000–10,000 items). The exporter's defaults (10 requests, 10 s flush) held about 33 documents a second and
-dropped state lines when full. Watch it on the *Pipeline & changes* dashboard (export queue).
+### Kafka buffer (`elastic` profile)
+
+```
+gnmic, web pods, state file ─► collector: receive pipelines (metrics, traces, logs) ─► kafka/out
+                                                                                        │
+                                Kafka 172.20.20.252: otlp_metrics, otlp_spans, otlp_logs (24 h / 2 GB per partition)
+                                                                                        │
+              Elasticsearch ◄─ elasticsearch/elastic ◄─ forward pipelines (*/elastic) ◄─ kafka/elastic (group otelcol-elastic)
+```
+
+- **What it buys:** if Elastic is slow, rate-limited or unreachable, data waits on the broker's disk for up to
+  24 hours and the forwarders catch up afterwards. The receivers never wait for Elastic.
+- **No loss on restart:** the forwarders commit a Kafka offset only after Elasticsearch accepted the batch
+  (`message_marking.after: true`, `wait_for_result: true`); a failed export is read again, not skipped.
+- **One collector:** the receive and forward pipelines run in the same EDOT Collector container; the broker
+  is the only extra container. Kafka is a buffer only: Elastic stays the one backend.
+- **Throughput:** both exporters batch up to 10,000 items and flush every second. (The Elasticsearch exporter's
+  defaults, 10 requests and a 10 s flush, held about 33 documents a second.)
+- **Is Elastic behind?** `make verify` prints the consumer lag. By hand:
+
+  ```bash
+  docker exec clab-netops-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group otelcol-elastic
+  ```
+- **Tested 2026-10-13:** Elastic made unreachable for 3½ minutes (bad URL in `secrets/es_url`, collector
+  restarted). The consumer lag grew to 113 messages; after `make sync` restored the URL it drained in about
+  50 seconds, and every minute of gNMI metrics (14 switches) and web traces from the outage was in Elastic.
+- **Not covered:** the few seconds a collector *restart* takes. gnmic and the apps can't deliver during it, and
+  Kafka only protects what the collector already received (the restore restart above cost about 850 of 7,200 gNMI
+  documents in that minute).
+- **Not covered:** a single broker with replication factor 1. A lab host failure loses what is buffered; a
+  broker restart doesn't (the log is on disk). The `elastic-otlp` profile does not use Kafka yet.
 
 ## 5. Data streams
 
@@ -315,7 +344,7 @@ without a path) on first use.
   in the roadmap is not configured.
 - **The lab key is created by hand,** once (see [section 2](#2-settings-and-keys)).
 - **Terraform runs from the lab host,** not from CI.
-- **The disk queue is inside the collector container** (`/tmp/otelcol-queue`). It survives a restart, not a
-  `make redeploy`.
+- **The buffer is one Kafka broker** without replication: it survives a broker or collector restart and a
+  `make redeploy` (the log is in the bundle), not the loss of the lab host.
 - **Only `gnmi`, `gnmi.state` and `otelcol` have their own templates.** The web app's data goes to the `generic` datasets
   with the project's default retention.

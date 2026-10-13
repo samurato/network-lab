@@ -1,44 +1,87 @@
-# Profile `elastic`: every pipeline also goes straight to Elasticsearch (elasticsearch exporter, OTel-native
-# mapping -> <type>-<dataset>.otel-default data streams).  automation/lab picks it when ELASTIC_ES_URL and
-# ELASTIC_API_KEY are set, and writes both into secrets/ (git-ignored, mode 600) — never into this file.
-extensions:
-  file_storage/queue:            # survives an Elastic outage or a collector restart
-    directory: /tmp/otelcol-queue
-    create_directory: true
-
+# Profile `elastic`: everything goes to Elasticsearch through Kafka (the broker is the `kafka` node, 172.20.20.252).
+#   receive  base.yml's metrics / traces / logs pipelines  -> kafka/out -> topics otlp_metrics, otlp_spans, otlp_logs
+#   forward  */elastic pipelines here: kafka/elastic        -> elasticsearch/elastic (OTel-native mapping,
+#            <type>-<dataset>.otel-default data streams)
+# If Elastic is slow or unreachable, data waits in Kafka (24 h / 2 GB per partition) and the forwarders catch up;
+# an offset is committed only after Elasticsearch accepted the batch, so a collector restart loses nothing.
+# automation/lab picks this profile when ELASTIC_ES_URL and ELASTIC_API_KEY are set, and writes both into
+# secrets/ (git-ignored, mode 600) — never into this file.
 exporters:
+  kafka/out:
+    brokers:
+      - 172.20.20.252:9092
+    # defaults kept: OTLP protobuf, topics otlp_metrics, otlp_spans, otlp_logs
+    producer:
+      compression: lz4
+      max_message_bytes: 10000000   # the broker allows 10 MiB (KAFKA_MESSAGE_MAX_BYTES)
+    sending_queue:               # in memory, short: only covers a Kafka restart
+      enabled: true
+      block_on_overflow: true
+      batch:
+        flush_timeout: 1s
+        sizer: items
+        min_size: 1000
+        max_size: 5000
   elasticsearch/elastic:
     endpoints:
       - ${file:/etc/otelcol/secrets/es_url}
     api_key: ${file:/etc/otelcol/secrets/api_key}
-    sending_queue:               # the exporter's defaults (10 requests, 10 s flush) held about 33 docs/s and
-      enabled: true              # dropped the rest when full; sized here in items, blocking instead of dropping
-      storage: file_storage/queue
-      num_consumers: 10
-      sizer: items
-      queue_size: 200000
+    sending_queue:               # the exporter's defaults (10 requests, 10 s flush) held about 33 docs/s
+      enabled: true
+      wait_for_result: true      # the Kafka offset is committed only once Elasticsearch has the data
       block_on_overflow: true
+      num_consumers: 10
       batch:
         flush_timeout: 1s
         sizer: items
         min_size: 1000
         max_size: 10000
 
+receivers:
+  kafka/elastic:
+    brokers:
+      - 172.20.20.252:9092
+    group_id: otelcol-elastic    # consumer lag of this group = how far Elastic is behind
+    initial_offset: earliest
+    message_marking:
+      after: true                # commit after the batch is exported, not when it is read
+      on_error: false            # a failed export is retried from Kafka, not skipped
+
 service:
   extensions:
     - health_check
     - file_storage/state           # base.yml: gnmic state-file offsets (a profile's list replaces base's)
-    - file_storage/queue
   pipelines:
     metrics:
       exporters:
         - debug
-        - elasticsearch/elastic
+        - kafka/out
     traces:
       exporters:
         - debug
-        - elasticsearch/elastic
+        - kafka/out
     logs:
       exporters:
         - debug
+        - kafka/out
+    metrics/elastic:
+      receivers:
+        - kafka/elastic
+      processors:
+        - memory_limiter
+      exporters:
+        - elasticsearch/elastic
+    traces/elastic:
+      receivers:
+        - kafka/elastic
+      processors:
+        - memory_limiter
+      exporters:
+        - elasticsearch/elastic
+    logs/elastic:
+      receivers:
+        - kafka/elastic
+      processors:
+        - memory_limiter
+      exporters:
         - elasticsearch/elastic
