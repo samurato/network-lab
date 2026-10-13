@@ -43,6 +43,14 @@ frr:
 
 # Linux nodes chaos-lab may impair (netem on fabric links) or run tools in.
 linux:
+  - dc1-web1
+  - dc1-web2
+  - dc1-app1
+  - dc1-app2
+  - dc1-stretch1
+  - dc2-db1
+  - dc2-db2
+  - dc2-stretch1
   - attacker1
   - inet-k6
   - dc1-k8s-cp1

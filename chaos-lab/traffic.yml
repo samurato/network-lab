@@ -1,0 +1,41 @@
+# Background traffic, so a fault has something to disrupt. Not a fault: it is not counted in a blast radius
+# and `make stop` leaves it running. Start / stop / status: make traffic-start [PROFILE=...], traffic-stop,
+# traffic-status. Every process carries the marker below in its command line, and traffic-stop kills exactly
+# those processes. Rates are bounded: about 120 Mbit/s in total (each iperf3 flow runs both ways).
+
+marker: chaoslab-traffic
+iperf_port: 5299                # not the default 5201: the iperf3 pods and net-08 keep theirs
+
+hosts:                          # data-plane addresses (eth1), for the flows and the ping matrix
+  dc1-web1: 10.10.10.11
+  dc1-web2: 10.10.10.12
+  dc1-app1: 10.10.20.13
+  dc1-app2: 10.10.20.14
+  dc1-stretch1: 10.15.0.11
+  dc2-db1: 10.20.30.11
+  dc2-db2: 10.20.30.12
+  dc2-stretch1: 10.15.0.12
+
+profiles:
+  web:                          # more Internet users: a second k6 next to the 5 req/s baseline
+    k6:
+      node: inet-k6
+      rps: 20                   # iterations/s; each is 2 requests (/ and /api/products)
+  east-west:                    # routed in VRF PROD, DC1 -> DCI -> DC2
+    iperf:
+      - client: dc1-app1
+        server: dc2-db1
+        rate: 20M
+      - client: dc1-app2
+        server: dc2-db2
+        rate: 20M
+  same-vlan:                    # VLAN 110 bridged over VXLAN between dc1-leaf1 and dc1-leaf2
+    iperf:
+      - client: dc1-web1
+        server: dc1-web2
+        rate: 10M
+  stretched:                    # VLAN 150 stretched across both DCs (layer 2 over the DCI)
+    iperf:
+      - client: dc1-stretch1
+        server: dc2-stretch1
+        rate: 10M

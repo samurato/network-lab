@@ -2,11 +2,13 @@
 VENV   ?= $(HOME)/.venvs/chaos
 PY     := $(VENV)/bin/python
 CLI    := PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.cli
+TRAFFIC := PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.traffic
+PROFILE ?=
 
-.PHONY: help venv list validate test dry dry-all run random stop status
+.PHONY: help venv list validate test dry dry-all run random stop status traffic-start traffic-dry traffic-stop traffic-status
 
 help:            ## list targets
-	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
+	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-15s %s\n", $$1, $$2}'
 
 venv:            ## create the venv (~/.venvs/chaos) from requirements.txt
 	python3 -m venv $(VENV)
@@ -39,3 +41,15 @@ stop:            ## kill switch: undo every active fault now
 
 status:          ## current run, active faults, recent runs
 	@$(CLI) status
+
+traffic-start:   ## background traffic (traffic.yml); PROFILE="web east-west same-vlan stretched", default all
+	@$(TRAFFIC) start $(PROFILE)
+
+traffic-dry:     ## show what traffic-start would run, start nothing
+	@$(TRAFFIC) start $(PROFILE) --dry
+
+traffic-stop:    ## stop every background traffic process (faults are left alone: that is `make stop`)
+	@$(TRAFFIC) stop
+
+traffic-status:  ## running generators + host-to-host ping matrix (loss / latency)
+	@$(TRAFFIC) status

@@ -38,6 +38,30 @@ make stop                       # kill switch: undo every active fault now
 
 `EOS_USER` / `EOS_PASSWORD` set the switch credentials. The lab default is admin / admin.
 
+## Background traffic
+
+Out of the box the lab carries only k6's 5 req/s to the public VIP, so most faults have little to disrupt. `traffic.yml` defines bounded profiles, about 120 Mbit/s in total, started inside existing containers. Nothing is installed.
+
+| Profile | Flows | Path | Makes visible |
+|---|---|---|---|
+| `web` | A second k6 in inet-k6, 20 iterations/s (40 req/s) | WAN → BGWs → fabric → web pods | hij-01/03, net-03, net-05, k8s-* |
+| `east-west` | iperf3 dc1-app1 → dc2-db1, dc1-app2 → dc2-db2, 20 Mbit/s each way | Routed in VRF PROD across the DCI | net-01, net-06, net-09, hij-02 |
+| `same-vlan` | iperf3 dc1-web1 ↔ dc1-web2, 10 Mbit/s | VLAN 110 over VXLAN, leaf1 ↔ leaf2 | net-07, net-01 |
+| `stretched` | iperf3 dc1-stretch1 ↔ dc2-stretch1, 10 Mbit/s | VLAN 150, layer 2 across the DCI | net-04 (MTU) |
+
+```sh
+make traffic-dry                         # what would start
+make traffic-start                       # all profiles (or PROFILE="web east-west")
+make traffic-status                      # running generators + host-to-host ping matrix (loss / ms)
+make traffic-stop
+```
+
+Each generator restarts itself after a fault breaks its connection. All of them carry the marker `chaoslab-traffic`, and `traffic-stop` kills only those processes. Traffic isn't a fault: `make stop` leaves it running and it doesn't count towards a blast radius. iperf3 uses port 5299, so the iperf3 pods and net-08 keep 5201.
+
+The traffic shows up in Elastic as interface counters (every 10 s) and web traces. The ping matrix is for you; the hosts don't send telemetry.
+
+A typical session: `make traffic-start`, then `CHAOSLAB_HOLD=180 make run EXP=net-01`, then `make traffic-status` during the hold, then `make traffic-stop`.
+
 ## Catalogue
 
 ### Network: the top 10 killers
@@ -112,6 +136,7 @@ Each experiment's `extensions.expected` lists the symptoms the telemetry should 
 
 ```
 targets.yml           the lab as chaos-lab sees it (switches, WAN, linux nodes, probes) + the deny list
+traffic.yml           background traffic profiles
 chaoslab/
   control.py          Chaos Toolkit control: guard, run start, watchdog, rollback safety net, recovery check
   guard.py            safety rules
@@ -120,6 +145,7 @@ chaoslab/
   eos.py frr.py netem.py k8s.py attacker.py     fault drivers
   probes.py           health checks and evidence (direct, never via telemetry)
   cli.py              list / run / random / stop / status
+  traffic.py          background traffic: start / stop / status (ping matrix)
 experiments/*.yml     one experiment per fault
 tests/test_guard.py   guard self-test
 ```
