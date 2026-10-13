@@ -12,7 +12,7 @@ chaos-lab lives in this repo but is **separate infrastructure**:
 | Framework | [Chaos Toolkit](https://chaostoolkit.org): each experiment is a YAML file with a steady-state hypothesis, a method (inject, hold) and rollbacks, and every run writes a JSON journal |
 | Drivers | `chaoslab/`: small Python modules the experiments call |
 | Health checks | Measured directly on the lab: HTTP from an Internet user, BGP state on every router, web replicas ready. They **never** read Elastic or telemetry. |
-| Ground truth | `~/clab-runs/chaos/runs.jsonl` on the host, published to Elastic's `chaos-*` indices for the Chaos command center. It is the answer key for scoring an agent: the lab key can't read `chaos-*`, and it sits in its own Kibana space. |
+| Ground truth | `~/clab-runs/chaos/runs.jsonl` on the host, also appended to Elastic's `logs-chaos.*` data streams for the Chaos command center, using the lab key. It is the answer key for scoring an agent: the lab key can write `logs-chaos.*` but not read it, and it sits in its own Kibana space. |
 | Scorecard | After each run, chaos-lab checks Elastic (read-only ES\|QL) for every signal the experiment should produce, and records whether it arrived and how fast. A missing signal is an observability gap. |
 
 **Why not Chaos Monkey:**
@@ -75,13 +75,9 @@ The NetOps dashboards show only telemetry, which is what an agent sees. The comm
 
 The dashboards are Terraform in `elastic/terraform/` (`dashboards-chaos.tf`, `dashboards-faults.tf`, `chaos.tf`), applied with `make elastic` at the repo root.
 
-**One-time setup for publishing:**
-1. Print the key's role descriptor with `automation/elastic chaos-role`.
-2. In Kibana → API keys, create a key named `chaos-lab` with that descriptor.
-3. Add it to the git-ignored `automation/elastic.env` as `ELASTIC_CHAOS_API_KEY=<encoded key>`.
-4. Run `make publish` to send the catalogue and earlier runs. Every run after that publishes as it goes.
+**Publishing** uses the lab key, `ELASTIC_ES_URL` and `ELASTIC_API_KEY` from the git-ignored `automation/elastic.env`, so there's nothing to set up. Every run publishes as it goes. `make publish` sends the catalogue and any earlier runs.
 
-Without the key, runs work as before, but nothing is published.
+The lab key can write `logs-chaos.*` but not read it, so an agent with that key can't see the answers. Keep it that way: don't widen the lab key's read privileges to `logs-*` (`elastic/terraform/security.tf`).
 
 | Command | Does |
 |---|---|
@@ -154,7 +150,7 @@ Each experiment's `extensions.expected` lists the symptoms the telemetry should 
 | Path | Content |
 |---|---|
 | `~/clab-runs/chaos/runs.jsonl` | One line per run: id, fault, targets, expected symptoms, what was injected and when, end, status, whether it recovered and how fast, and the scorecard |
-| Elastic `chaos-*` | The same runs, the scorecard rows, a timeline of injections and rollbacks, and the catalogue (Chaos command center) |
+| Elastic `logs-chaos.*` | The same runs, the scorecard rows, a timeline of injections and rollbacks, and the catalogue (Chaos command center). Append-only: a run is a start snapshot plus a final one |
 | `~/clab-runs/chaos/journals/` | The Chaos Toolkit journal for each run, including evidence probe output such as the hijacked route |
 | `~/clab-runs/chaos/logs/` | Run logs |
 | GitHub `drift` issue | A switch or WAN change shows up as drift within 15 min: a realistic operational signal |
@@ -169,8 +165,8 @@ chaoslab/
   guard.py            safety rules
   state.py            active faults + their undo, ground truth, hold, rollback
   scorecard.py        detection scorecard: did each expected signal reach Elastic, and how fast
-  publish.py          runs, scorecards and the timeline to Elastic (chaos-* indices)
-  elastic.py          Elastic client: writes chaos-* only, reads telemetry with ES|QL
+  publish.py          runs, scorecards and the timeline to Elastic (logs-chaos.*)
+  elastic.py          Elastic client (lab key): appends to logs-chaos.* only, reads telemetry with ES|QL
   watchdog.py         dead man's switch
   eos.py frr.py netem.py k8s.py attacker.py     fault drivers
   probes.py           health checks and evidence (direct, never via telemetry)

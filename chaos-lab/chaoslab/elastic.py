@@ -1,11 +1,12 @@
-"""Elastic client for chaos-lab. Writes go only to the chaos-* indices (the answer key, unreadable with the lab
-key; see elastic/terraform/chaos.tf), reads are ES|QL for the detection scorecard. Nothing here touches the
-telemetry pipeline: gnmic, the collector and Kafka are not involved.
+"""Elastic client for chaos-lab, with the lab key. Writes are append-only and go only to the logs-chaos.* data
+streams (the answer key: the lab key can write them but not read them; elastic/terraform/chaos.tf). Reads are
+ES|QL over the telemetry, for the detection scorecard. Nothing here touches the telemetry pipeline: gnmic, the
+collector and Kafka are not involved.
 
-Credentials, environment first, then the git-ignored automation/elastic.env (never in git):
-  ELASTIC_ES_URL           Elasticsearch endpoint
-  ELASTIC_CHAOS_API_KEY    chaos-lab key: write chaos-*, read telemetry (`automation/elastic chaos-role`)
-Without the chaos key, publishing is skipped and the scorecard reads with the lab's own key from the bundle.
+Credentials, environment first, then the git-ignored automation/elastic.env, then the copy the lab bundle holds
+for the collector (never in git):
+  ELASTIC_ES_URL     Elasticsearch endpoint
+  ELASTIC_API_KEY    the lab key
 """
 import functools
 import json
@@ -47,22 +48,20 @@ def _url() -> str:
     return url.rstrip("/")
 
 
-def can_write() -> bool:
-    return bool(_settings().get("ELASTIC_CHAOS_API_KEY")) and bool(_settings().get("ELASTIC_ES_URL")
-                                                                   or _settings().get("BUNDLE_ES_URL"))
-
-
 def available() -> bool:
     s = _settings()
-    return bool((s.get("ELASTIC_CHAOS_API_KEY") or s.get("BUNDLE_API_KEY"))
+    return bool((s.get("ELASTIC_API_KEY") or s.get("BUNDLE_API_KEY"))
                 and (s.get("ELASTIC_ES_URL") or s.get("BUNDLE_ES_URL")))
 
 
-def _headers(write: bool) -> dict:
+can_write = available
+
+
+def _headers(write: bool = False) -> dict:
     s = _settings()
-    key = s.get("ELASTIC_CHAOS_API_KEY") or ("" if write else s.get("BUNDLE_API_KEY", ""))
+    key = s.get("ELASTIC_API_KEY") or s.get("BUNDLE_API_KEY")
     if not key:
-        raise RuntimeError("no chaos-lab API key (ELASTIC_CHAOS_API_KEY)")
+        raise RuntimeError("no Elastic API key (ELASTIC_API_KEY)")
     return {"Authorization": f"ApiKey {key}"}
 
 
@@ -79,11 +78,11 @@ def esql(query: str, **params) -> list[dict]:
 
 
 def bulk(actions: list[tuple[dict, dict]]) -> None:
-    """[(action, doc)], e.g. ({"index": {"_index": "chaos-runs", "_id": id}}, doc). Only chaos-* indices."""
+    """[(action, doc)], e.g. ({"create": {"_index": "logs-chaos.runs-default"}}, doc). Append-only, logs-chaos.*."""
     for action, _ in actions:
-        index = next(iter(action.values()))["_index"]
-        if not index.startswith("chaos-"):
-            raise ValueError(f"chaos-lab writes only chaos-* indices, not {index}")
+        op, meta = next(iter(action.items()))
+        if op != "create" or not meta["_index"].startswith("logs-chaos."):
+            raise ValueError(f"chaos-lab only appends to logs-chaos.* data streams, not {op} {meta['_index']}")
     body = "".join(json.dumps(a) + "\n" + json.dumps(d, default=str) + "\n" for a, d in actions)
     r = requests.post(f"{_url()}/_bulk", data=body.encode(), timeout=60,
                       headers={**_headers(True), "Content-Type": "application/x-ndjson"})
