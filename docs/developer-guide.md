@@ -234,7 +234,7 @@ env {
 
 ## Example in the repo: `web`
 
-`kubernetes/terraform/apps.tf` runs the colleague's app `chaos2cure/web:1`. It is a complete, real example
+`kubernetes/terraform/apps.tf` runs the colleague's app `chaos2cure/web:2`. It is a complete, real example
 of everything above:
 - a lab-built image;
 - 4 replicas, 2 per DC;
