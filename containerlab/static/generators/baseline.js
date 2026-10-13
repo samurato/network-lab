@@ -7,6 +7,10 @@ export const options = {
   // A new connection per request gives every request its own source port, so the ECMP hash on the
   // WAN routers (layer 4) can spread them over all paths instead of pinning one keep-alive flow.
   noConnectionReuse: true,
+  // k6 clears each virtual user's cookies at the start of every iteration by default, which makes
+  // every iteration a brand-new visitor to the app (about 140 per 30 s). Keep them, so 20 virtual
+  // users are 20 visitors and the page stays 'calm' at baseline.
+  noCookiesReset: true,
   scenarios: {
     users: {
       executor: 'constant-arrival-rate',
