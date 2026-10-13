@@ -4,6 +4,8 @@ containerlab/*.annotations.json
 generated/config_backup/
 containerlab/telemetry/state/*
 !containerlab/telemetry/state/README.md
+containerlab/telemetry/kafka-data/*
+!containerlab/telemetry/kafka-data/README.md
 clab-*/
 __pycache__/
 ._*

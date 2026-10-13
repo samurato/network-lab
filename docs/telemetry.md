@@ -41,7 +41,8 @@ flowchart LR
   APP -- "OTLP HTTP :4318<br/>metrics, traces, logs" --> OC
   GN -- "always" --> PROM["Prometheus endpoint<br/>host :9464 (local debug tap)"]
   OC -- "always" --> DBG["debug exporter<br/>(container log)"]
-  OC -- "profile elastic:<br/>elasticsearch exporter + disk queue" --> ES["Elastic<br/>(Elasticsearch endpoint)"]
+  OC -- "profile elastic:<br/>kafka exporter" --> KF["Kafka 172.20.20.252<br/>(24 h buffer)"]
+  KF -- "same collector:<br/>elasticsearch exporter" --> ES["Elastic<br/>(Elasticsearch endpoint)"]
   CI["deploy workflow<br/>change-event.sh"] -- "_doc API" --> CH["logs-netops.changes"]
   CH --- ES
 ```
@@ -79,7 +80,7 @@ Everything is generated from the repo; nothing on the host is hand-edited.
 |---|---|---|
 | `automation/telemetry/gnmic.base.yml` | **yes** | subscriptions, processors, the OTLP output and the Prometheus debug tap |
 | `containerlab/telemetry/otelcol/base.yml` | **yes** | collector receivers, processors, pipelines (metrics, traces, logs) |
-| `containerlab/telemetry/otelcol/elastic.yml` | **yes** | profile `elastic`: the `elasticsearch` exporter and the disk queue |
+| `containerlab/telemetry/otelcol/elastic.yml` | **yes** | profile `elastic`: to Kafka, and from Kafka to the `elasticsearch` exporter |
 | `containerlab/telemetry/otelcol/elastic-otlp.yml` | **yes** | profile `elastic-otlp`: OTLP to a Managed OTLP endpoint (for later) |
 | `containerlab/telemetry/otelcol/local.yml` | **yes** | profile `local`: nothing exported |
 | `containerlab/telemetry/otelcol/profile.yml` | no, generated | copy of `local.yml`; `automation/lab` overwrites it in the running bundle |
@@ -212,7 +213,7 @@ files merged in order: `--config /etc/otelcol/base.yml --config /etc/otelcol/pro
 | Profile | Chosen when | Adds |
 |---|---|---|
 | `local` | no `ELASTIC_API_KEY` | info-level logging only. Telemetry stays in the lab |
-| `elastic` | `ELASTIC_ES_URL` + `ELASTIC_API_KEY` | the `elasticsearch/elastic` exporter (OTel-native mapping) and a disk-backed queue |
+| `elastic` | `ELASTIC_ES_URL` + `ELASTIC_API_KEY` | `kafka/out` to the Kafka broker, and forward pipelines `kafka/elastic` → `elasticsearch/elastic` (OTel-native mapping); see [elastic.md § Kafka buffer](elastic.md#kafka-buffer-elastic-profile) |
 | `elastic-otlp` | `ELASTIC_OTLP_ENDPOINT` + `ELASTIC_API_KEY` | the `otlp_http/elastic` exporter to a Managed OTLP endpoint (ready, not used yet) |
 
 `automation/lab` chooses the profile and writes the URL and key into files only the collector reads, every
@@ -224,9 +225,11 @@ time it copies the bundle, and restarts the collector when they change. Details 
 ```
 receivers:  otlp (gRPC 0.0.0.0:4317, HTTP 0.0.0.0:4318), prometheus/self (the collector's own metrics),
             file_log/gnmi_state (gnmic's state file, /var/lib/netops-state/gnmi-state*.json)
-metrics:    otlp, prometheus/self    -> memory_limiter -> cumulative_to_delta/histograms -> transform/contract -> debug [, elasticsearch/elastic]
-traces:     otlp                     -> memory_limiter -> transform/contract -> debug [, elasticsearch/elastic]
-logs:       otlp, file_log/gnmi_state -> memory_limiter -> transform/gnmi_state -> transform/contract -> debug [, elasticsearch/elastic]
+metrics:    otlp, prometheus/self    -> memory_limiter -> cumulative_to_delta/histograms -> transform/contract -> debug [, kafka/out]
+traces:     otlp                     -> memory_limiter -> transform/contract -> debug [, kafka/out]
+logs:       otlp, file_log/gnmi_state -> memory_limiter -> transform/gnmi_state -> transform/contract -> debug [, kafka/out]
+profile elastic only, forward pipelines:
+metrics/elastic, traces/elastic, logs/elastic:  kafka/elastic -> memory_limiter -> elasticsearch/elastic
 ```
 
 - **`transform/contract`** sets resource attributes:
@@ -610,7 +613,7 @@ Agree with the Elastic owner who applies it. It holds:
 
 ### Phase 4: watch the pipeline itself
 - **Self-metrics:** gnmic's API server metrics and the collector's own metrics, both into Elastic.
-- **Queue:** move the disk queue to the local runtime directory, so it survives the container being recreated.
+- **Queue:** done differently: Kafka buffers everything before Elastic (2026-10-13), and its log survives a redeploy.
 - **Verify against Elastic:** `make verify` asks Elastic (ES|QL count per device over 2 minutes, all 14
   required) instead of the local Prometheus endpoint.
 
@@ -628,7 +631,8 @@ Agree with the Elastic owner who applies it. It holds:
 | Decision | Why | Instead of |
 |---|---|---|
 | gnmic as the gNMI client | open source, handles many targets, OTLP output, event processors for shaping data | Arista TerminAttr + CloudVision (licence, not in the lab); Telegraf (weaker gNMI processing) |
-| OTLP to a collector, then to Elastic | one open protocol for network and app data; the collector adds the contract labels, batching and a disk queue; Elastic accepts OTLP natively | gnmic → Kafka → Logstash (more moving parts on one host); Prometheus remote-write |
+| OTLP to a collector, then to Elastic | one open protocol for network and app data; the collector adds the contract labels and batching; Elastic accepts OTLP natively | gnmic → Kafka → Logstash (more moving parts on one host); Prometheus remote-write |
+| Kafka as the buffer, inside the collector's path (2026-10-13) | holds up to 24 h when Elastic is slow or down; offsets committed only after Elastic accepted the data; one broker and the same collector (receive pipelines → Kafka → forward pipelines) | the collector's own disk queue only (small, dropped data when full); Logstash between Kafka and Elastic |
 | State enums as numbers | one series per state, easy to threshold and alert on (`session_state < 6`, `oper_status == 0`) | string values, which become one series per state |
 | Drop unused ports at gnmic | about 60 % fewer interface series, and no "down" ports that were never cabled | filtering in Elastic |
 | Collector profiles (`local` / `elastic` / `elastic-otlp`) | the lab works without Elastic credentials; the credentials never enter git; a Managed OTLP endpoint is a setting, not a code change | one config with empty variables |

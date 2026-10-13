@@ -332,7 +332,7 @@ flowchart LR
   SW["14 cEOS switches<br/>gNMI :6030"] -- "subscribe" --> GN["gnmic<br/>172.20.20.251"]
   GN -- "OTLP gRPC :4317" --> OC["EDOT Collector<br/>172.20.20.250"]
   APP["web pods"] -- "OTLP HTTP :4318<br/>traces, metrics, logs" --> OC
-  OC -- "profile elastic:<br/>elasticsearch exporter + disk queue" --> ES["Elastic Cloud<br/>Serverless"]
+  OC -- "profile elastic:<br/>via Kafka (24 h buffer)" --> ES["Elastic Cloud<br/>Serverless"]
   GN -- "always" --> PR["localhost:9464/metrics<br/>(local debug tap)"]
   CI["deploy workflow"] -- "change event" --> ESC["logs-netops.changes"]
   ESC --- ES

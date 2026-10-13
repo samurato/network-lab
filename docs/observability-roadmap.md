@@ -27,7 +27,7 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 
 | Works | Missing |
 |---|---|
-| gnmic → EDOT Collector → Elastic: interface counters, oper-status, MTU, BGP state and prefixes, OSPF LSA count, LLDP, memory, in `metrics-gnmi.otel-default` (short `net.*` names, about 1,900 series) | OSPF neighbour state (not in cEOS gNMI), syslog, FRR WAN, hosts |
+| gnmic → EDOT Collector → Kafka → Elastic: interface counters, oper-status, MTU, BGP state and prefixes, OSPF LSA count, LLDP, memory, in `metrics-gnmi.otel-default` (short `net.*` names, about 1,900 series) | OSPF neighbour state (not in cEOS gNMI), syslog, FRR WAN, hosts |
 | Every route, BGP, port, LLDP, VTEP, VNI and MAC change in `logs-gnmi.state.otel-default` | |
 | The `web` pods' traces, metrics and logs reach Elastic (`traces-generic.otel-default`) | Kubernetes, Cilium, Hubble |
 | `change-event.sh` writes ECS change events to `logs-netops.changes-default` | Context indices (topology, IP map, intent), alert rules, SLOs, dashboards |
@@ -36,7 +36,7 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 | `make verify` checks freshness in Elastic with ES\|QL | |
 
 **Lab status:** running since 2026-10-13 (brought back with `make up` for Step 6, redeployed for the new telemetry
-binds; `make verify` 0 FAIL). **Next:** a Kafka buffer between the collector and Elastic (asked 2026-10-13), then Step 7 (syslog and FRR WAN telemetry).
+binds; `make verify` 0 FAIL). Telemetry reaches Elastic through a Kafka buffer (24 h). **Next:** Step 7 (syslog and FRR WAN telemetry).
 
 The Elastic project is **Serverless, Elasticsearch type** (no Managed OTLP endpoint, no Observability apps).
 The collector writes straight to Elasticsearch and is ready for a Managed OTLP endpoint
@@ -314,6 +314,7 @@ RFC 3164 senders.
 ## Progress log
 | Date | Step | PR | Notes |
 |---|---|---|---|
+| 2026-10-13 | Kafka buffer | (this PR) | Kafka (`apache/kafka:3.9.1`, one KRaft broker, 172.20.20.252) between the collector and Elastic: receive pipelines → `kafka/out` → topics → `kafka/elastic` → `elasticsearch/elastic`, offsets committed after Elastic accepted. Outage test: Elastic unreachable 3½ min, lag 113 messages, drained in ~50 s, no gap. `make verify` checks the consumer lag (67 PASS) |
 | 2026-10-13 | 6 | #12 | gnmic: AFT routes, EVPN/VXLAN, MTU, OSPF LSA count; CPU dropped; short `net.*` names; state changes → `logs-gnmi.state` via a shared file and `file_log`. 1,897 series (was ~3,600). Found: no OSPF neighbour state over gNMI on cEOS 4.36; `in` is an ES\|QL keyword; logsdb hides a record-level `host.name` (moved to the resource); gnmic file loader re-subscribing every 30 s (removed); exporter queue too small (sized). Withdraw drill passed. `make verify` 0 FAIL |
 | 2026-10-13 | – | – | Lab shut down. Next: Step 6. Open: cEOS rsyslog crash loop (step 7), leftover `metrics-prometheusreceiver.otel-default` data stream from the first test |
 | 2026-10-13 | 5 + timezone | #10 | AFT on, syslog configured (blocked by cEOS rsyslog loop), sFlow works on cEOS (dc1-leaf1 test), Australia/Sydney on every device. CI deploy verified: topology redeploy, collector profile `elastic`, change event in Elastic, `make verify` 0 FAIL |
