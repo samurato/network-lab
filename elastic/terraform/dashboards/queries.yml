@@ -312,64 +312,78 @@ imp_web_rpm_ts: |
     AND NOT http.user_agent LIKE "kube-probe*" AND k8s.node.name IS NOT NULL
   | STATS requests = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
 
-# ---- Chaos command center (Chaos lab space; chaos-* indices are the answer key, unreadable with the lab key)
+# ---- Chaos command center (Chaos lab space). logs-chaos.* is append-only and is the answer key: the lab key
+# can write it but not read it. Each publish is one batch (one @timestamp); "latest per run" = INLINE STATS
+# MAX(@timestamp) BY run_id.
 chaos_active: |
-  FROM chaos-runs
-  | WHERE status == "running"
+  FROM logs-chaos.runs-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND status == "running"
   | STATS active_faults = COUNT(*)
 chaos_runs_kpi: |
-  FROM chaos-runs
-  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
-  | STATS runs = COUNT(*)
+  FROM logs-chaos.runs-*
+  | WHERE started >= ?_tstart AND started <= ?_tend
+  | STATS runs = COUNT_DISTINCT(run_id)
 chaos_detect_pct: |
-  FROM chaos-signals
-  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  FROM logs-chaos.signals-*
+  | WHERE started >= ?_tstart AND started <= ?_tend
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest
   | STATS detected_pct = ROUND(100.0 * SUM(CASE(detected, 1, 0)) / COUNT(*), 0)
 chaos_ttd: |
-  FROM chaos-signals
-  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND detected
+  FROM logs-chaos.signals-*
+  | WHERE started >= ?_tstart AND started <= ?_tend
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND detected
   | STATS median_ttd_s = ROUND(MEDIAN(ttd_s), 1)
 chaos_now: |
-  FROM chaos-runs
-  | WHERE status == "running"
-  | KEEP @timestamp, experiment, title, fault, targets, injected, hold_s
-  | SORT @timestamp DESC
+  FROM logs-chaos.runs-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND status == "running"
+  | KEEP started, experiment, title, fault, targets, injected, hold_s
+  | SORT started DESC
 chaos_runs: |
-  FROM chaos-runs
-  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  FROM logs-chaos.runs-*
+  | WHERE started >= ?_tstart AND started <= ?_tend
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest
   | EVAL signals = CONCAT(TO_STRING(detected), " / ", TO_STRING(total))
-  | KEEP @timestamp, experiment, title, status, recovered, recovery_s, signals, ended, run_id
-  | SORT @timestamp DESC
+  | KEEP started, experiment, title, status, recovered, recovery_s, signals, ended, run_id
+  | SORT started DESC
   | LIMIT 100
 chaos_coverage: |
-  FROM chaos-runs
-  | WHERE total IS NOT NULL
-  | STATS last_run = MAX(@timestamp), detected = LAST(detected, @timestamp), total = LAST(total, @timestamp),
-          runs = COUNT(*)
+  FROM logs-chaos.runs-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND total IS NOT NULL
+  | STATS last_run = MAX(started), detected = LAST(detected, started), total = LAST(total, started), runs = COUNT(*)
       BY experiment, layer
   | EVAL coverage_pct = ROUND(100.0 * detected / total, 0)
   | KEEP experiment, layer, coverage_pct, detected, total, runs, last_run
   | SORT experiment
 chaos_catalogue: |
-  FROM chaos-experiments
+  FROM logs-chaos.experiments-*
+  | INLINE STATS latest = MAX(@timestamp) BY experiment
+  | WHERE @timestamp == latest
   | KEEP experiment, layer, title, random, blast_radius, signals
   | SORT experiment
 chaos_gaps: |
-  FROM chaos-signals
-  | WHERE NOT detected
-  | STATS missed = COUNT(*), last_missed = MAX(@timestamp) BY experiment, label
+  FROM logs-chaos.signals-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND NOT detected
+  | STATS missed = COUNT(*), last_missed = MAX(started) BY experiment, label
   | SORT experiment
 chaos_ttd_by_signal: |
-  FROM chaos-signals
-  | WHERE detected
+  FROM logs-chaos.signals-*
+  | INLINE STATS latest = MAX(@timestamp) BY run_id
+  | WHERE @timestamp == latest AND detected
   | STATS runs = COUNT(*), avg_ttd_s = ROUND(AVG(ttd_s), 1), max_ttd_s = MAX(ttd_s) BY experiment, label
   | SORT avg_ttd_s DESC
 chaos_events_ts: |
-  FROM chaos-events
+  FROM logs-chaos.events-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
   | STATS events = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), event.action
 chaos_event_log: |
-  FROM chaos-events
+  FROM logs-chaos.events-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
   | KEEP @timestamp, event.action, experiment, what, message
   | SORT @timestamp DESC

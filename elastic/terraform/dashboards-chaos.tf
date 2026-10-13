@@ -28,7 +28,7 @@ resource "elasticstack_kibana_dashboard" "chaos" {
         h = 3
       }
       config_json = jsonencode({
-        content = "**Chaos command center**: what chaos-lab broke, when, whether the lab recovered, and whether each expected signal reached Elastic and how fast (`chaos-runs`, `chaos-signals`, `chaos-events`). This space is the answer key: agents get no access to it. Runs start from the lab host (`make run EXP=...` in chaos-lab); `make stop` there undoes every fault. To see a run's symptoms, open [Fault impact](/s/netops/app/dashboards#/view/netops-impact) or [Link failures](/s/netops/app/dashboards#/view/netops-links) in the NetOps space with the run's time window."
+        content = "**Chaos command center**: what chaos-lab broke, when, whether the lab recovered, and whether each expected signal reached Elastic and how fast (`logs-chaos.*`). This space is the answer key: agents get no access to it. Runs start from the lab host (`make run EXP=...` in chaos-lab); `make stop` there undoes every fault. To see a run's symptoms, open [Fault impact](/s/netops/app/dashboards#/view/netops-impact) or [Link failures](/s/netops/app/dashboards#/view/netops-links) in the NetOps space with the run's time window."
       })
     },
     {
@@ -125,7 +125,7 @@ resource "elasticstack_kibana_dashboard" "chaos" {
         data_source = local.esql_source.chaos_now
         rows = [
           {
-            column = "@timestamp"
+            column = "started"
           },
           {
             column = "experiment"
@@ -162,7 +162,7 @@ resource "elasticstack_kibana_dashboard" "chaos" {
         data_source = local.esql_source.chaos_runs
         rows = [
           {
-            column = "@timestamp"
+            column = "started"
           },
           {
             column = "experiment"

@@ -69,15 +69,13 @@ in the environment wins over the file.
 | `ELASTIC_OTLP_ENDPOINT` | collector (`elastic-otlp`) | optional secret | Managed OTLP endpoint. Empty today |
 | `ELASTIC_KIBANA_URL` | Terraform | no | Kibana endpoint, `https://<project>.kb.<region>.aws.elastic.cloud` |
 | `ELASTIC_TF_API_KEY` | Terraform | **no, never** | the **admin key** (below) |
-| `ELASTIC_CHAOS_API_KEY` | chaos-lab | no | the **chaos key** (below): chaos-lab publishes its runs to `chaos-*` |
 
-Three API keys:
+Two API keys:
 
 | Key | Name in Kibana | Privileges | Lives in |
 |---|---|---|---|
 | Admin key | `LAB_HACKATHON KEY` (or any) | your own (no restriction) | `ELASTIC_TF_API_KEY`, lab host only |
 | Lab key | `netops-lab` | write `logs-*-*`, `metrics-*-*`, `traces-*-*`; read the lab's own data streams; cluster `monitor` | `ELASTIC_API_KEY`, lab host and CI |
-| Chaos key | `chaos-lab` | write and read `chaos-*`; read `metrics-gnmi.otel-*`, `logs-gnmi.state.otel-*`, `traces-*.otel-*`; cluster `monitor` | `ELASTIC_CHAOS_API_KEY`, lab host only. Role descriptor: `automation/elastic chaos-role` |
 
 The lab key's privileges are code (`elastic/terraform/security.tf`), but the key itself is created by hand
 once: Elasticsearch doesn't let an API key create another API key with privileges, and on Serverless people
@@ -233,7 +231,7 @@ In Kibana, open the **NetOps lab** space, then Dashboards:
 | NetOps · Link failures | `netops-links` | ports down now, port-down events, ports that flapped, routes withdrawn; port DOWN/UP events and ports down over time; failed links with both ends (LLDP far end), down and up times and duration; traffic per port (moving to the surviving links); routes withdrawn per switch; errors and flaps; port/LLDP and BGP event logs |
 | NetOps · Fault impact | `netops-impact` | one time axis across layers: ports down, BGP not established, route changes, web 5xx now; state changes by type; ports down and BGP sessions down over time; route changes and traffic per switch; web requests per node, p95 and 5xx; what changed; deploys |
 
-In the **Chaos lab** space: **Chaos · Command center** (`chaos-command-center`): chaos-lab's runs, the fault in progress, recovery, the detection scorecard (which expected signals reached Elastic and how fast), coverage per experiment, observability gaps and the chaos timeline. Its `chaos-*` indices are the answer key for testing an agent, so they live in their own space and the lab key can't read them (`elastic/terraform/chaos.tf`; [chaos-lab/README.md](../chaos-lab/README.md)).
+In the **Chaos lab** space: **Chaos · Command center** (`chaos-command-center`): chaos-lab's runs, the fault in progress, recovery, the detection scorecard (which expected signals reached Elastic and how fast), coverage per experiment, observability gaps and the chaos timeline. chaos-lab writes its `logs-chaos.*` data streams with the lab key (append-only). They are the answer key for testing an agent: the lab key can write them but not read them, and they live in their own space (`elastic/terraform/chaos.tf`; [chaos-lab/README.md](../chaos-lab/README.md)). Don't widen the lab key's read privileges to `logs-*`.
 
 - Tiles and "now" tables use a fixed short window (2 or 5 minutes). Charts follow the time picker through
   `?_tstart` / `?_tend`. Each dashboard refreshes every 30 s.

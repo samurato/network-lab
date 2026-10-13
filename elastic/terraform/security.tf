@@ -16,6 +16,7 @@ locals {
           privileges = ["auto_configure", "create_doc"]
         },
         {
+          # read stays narrow on purpose: chaos-lab's logs-chaos.* (the agent answer key, chaos.tf) must not match
           names      = ["metrics-gnmi.otel-*", "metrics-otelcol.otel-*", "traces-*.otel-*", "logs-*.otel-*", "logs-netops.*-*"]
           privileges = ["read", "view_index_metadata"]
         },
