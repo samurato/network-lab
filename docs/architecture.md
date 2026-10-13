@@ -274,7 +274,8 @@ What runs in the cluster today (namespace `prod`):
 
 | Workload | Exposure |
 |---|---|
-| `web`: the colleague's app `chaos2cure/web:1`, 4 replicas spread 2 + 2 over the DCs | `web-public` 192.0.2.10:80, `web-internal` 10.99.0.10:80 |
+| `web`: the colleague's app `chaos2cure/web:2`, 4 replicas spread 2 + 2 over the DCs and one per node (hard spread) | `web-public` 192.0.2.10:80, `web-internal` 10.99.0.10:80 |
+| `redis`: shared visitor and request counters for `web` (volatile; the app falls back to per-pod counts without it) | ClusterIP `redis.prod` port 6379 |
 | `iperf3-dc1`, `iperf3-dc2`: one iperf3 server per DC | ClusterIP `iperf3-dc1.prod`, `iperf3-dc2.prod` port 5201 |
 | `db`: reserved Service, no backend yet | `db.prod` 5432, future backend VIP 10.20.30.10 |
 
@@ -487,6 +488,6 @@ collector back as `local` and change events stay in `~/netops-changes.jsonl`).
 | No flow data in Elastic | no per-flow reachability analysis yet. cEOS sFlow works (tested on dc1-leaf1) but nothing collects it | goflow2 → Elastic: [roadmap](observability-roadmap.md) step 10 |
 | No syslog from the switches | rsyslog crash-loops inside cEOS on this host (also on a fresh cEOS without logging config); switch events only via gNMI state | find the cEOS rsyslog cause: [roadmap](observability-roadmap.md) step 7 |
 | No synthetic ping-mesh | reachability only via `make verify` | `icmp_check` probes → OTLP (designed, not built) |
-| WAN routers hash ECMP on L3 only | one client (k6) always lands in the same DC | `net.ipv4.fib_multipath_hash_policy=1` on wan1/wan2 |
+| ~~WAN routers hash ECMP on L3 only~~ | fixed: `fib_multipath_hash_policy=1` on wan1/wan2 (`sysctls` in the topology) and k6 opens a new connection per request | verify with `make verify` and the per-node request split |
 | Occasional VIP request timeouts were seen once | not reproduced on re-test (40/40 OK) | watch `make verify`; investigate if it recurs |
 | Repo is public and the runner is self-hosted | a fork PR could run code on the lab host | mitigated: workflows from fork PRs need approval; keep it that way (or make the repo private) |

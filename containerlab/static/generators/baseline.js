@@ -4,6 +4,9 @@ import http from 'k6/http';
 const target = __ENV.TARGET || 'http://192.0.2.10';
 
 export const options = {
+  // A new connection per request gives every request its own source port, so the ECMP hash on the
+  // WAN routers (layer 4) can spread them over all paths instead of pinning one keep-alive flow.
+  noConnectionReuse: true,
   scenarios: {
     users: {
       executor: 'constant-arrival-rate',

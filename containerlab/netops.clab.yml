@@ -179,6 +179,8 @@ topology:
         graph-icon: pe
         graph-posX: '427'
         graph-posY: '0'
+      sysctls:
+        net.ipv4.fib_multipath_hash_policy: 1
       binds:
         - configs/wan1.conf:/etc/frr/frr.conf
         - configs/wan1.netdev.sh:/etc/frr/netdev.sh:ro
@@ -198,6 +200,8 @@ topology:
         graph-icon: pe
         graph-posX: '682'
         graph-posY: '0'
+      sysctls:
+        net.ipv4.fib_multipath_hash_policy: 1
       binds:
         - configs/wan2.conf:/etc/frr/frr.conf
         - configs/wan2.netdev.sh:/etc/frr/netdev.sh:ro

@@ -22,6 +22,79 @@ resource "kubernetes_namespace_v1" "prod" {
   depends_on = [helm_release.cilium]
 }
 
+# Shared counters for the web app (distinct visitors as a HyperLogLog per 5 s slot, request counts).
+# Volatile on purpose: nothing is persisted, and the app falls back to per-pod counting if it is gone.
+resource "kubernetes_deployment_v1" "redis" {
+  metadata {
+    name      = "redis"
+    namespace = kubernetes_namespace_v1.prod.metadata[0].name
+    labels = {
+      app = "redis"
+    }
+  }
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        app = "redis"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          app = "redis"
+        }
+      }
+      spec {
+        node_selector = {
+          "topology.kubernetes.io/zone" = "dc1"
+        }
+        container {
+          name  = "redis"
+          image = "redis:8.10.2-alpine"
+          args  = ["--save", "", "--appendonly", "no"]
+          port {
+            container_port = 6379
+          }
+          readiness_probe {
+            tcp_socket {
+              port = 6379
+            }
+            period_seconds = 5
+          }
+          resources {
+            requests = {
+              cpu    = "20m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [kubernetes_namespace_v1.prod]
+}
+
+resource "kubernetes_service_v1" "redis" {
+  metadata {
+    name      = "redis"
+    namespace = kubernetes_namespace_v1.prod.metadata[0].name
+  }
+  spec {
+    selector = {
+      app = "redis"
+    }
+    port {
+      port        = 6379
+      target_port = 6379
+    }
+  }
+  depends_on = [kubernetes_deployment_v1.redis]
+}
+
 resource "kubernetes_deployment_v1" "web" {
   metadata {
     name      = "web"
@@ -67,10 +140,10 @@ resource "kubernetes_deployment_v1" "web" {
             }
           }
         }
-        topology_spread_constraint { # and across nodes inside a DC
+        topology_spread_constraint { # and across nodes inside a DC: hard, or both pods of a DC land on one node
           max_skew           = 1
           topology_key       = "kubernetes.io/hostname"
-          when_unsatisfiable = "ScheduleAnyway"
+          when_unsatisfiable = "DoNotSchedule"
           label_selector {
             match_labels = {
               app = "web"
@@ -79,11 +152,23 @@ resource "kubernetes_deployment_v1" "web" {
         }
         container {
           name              = "web"
-          image             = "chaos2cure/web:1"
+          image             = "chaos2cure/web:2"
           image_pull_policy = "Never" # loaded into the nodes by nodes.tf
           port {
             name           = "http"
             container_port = 80
+          }
+          env {
+            name  = "REDIS_URL" # visitors and request rate are shared by all pods through this
+            value = "redis://redis.prod:6379"
+          }
+          env {
+            name = "POD_NAME"
+            value_from {
+              field_ref {
+                field_path = "metadata.name"
+              }
+            }
           }
           env {
             name  = "OTEL_SERVICE_NAME"
@@ -137,7 +222,7 @@ resource "kubernetes_deployment_v1" "web" {
       }
     }
   }
-  depends_on = [terraform_data.image]
+  depends_on = [terraform_data.image, kubernetes_service_v1.redis]
 }
 
 resource "kubernetes_pod_disruption_budget_v1" "web" {

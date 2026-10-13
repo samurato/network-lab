@@ -329,6 +329,10 @@ def post() -> None:
         (CLAB / "configs" / f"{name}.netdev.sh").write_text(netdev_tpl.render(node=wan_nodes[name]))
         nodes[name] = {"kind": "linux", "image": wan["image"], "mgmt-ipv4": w["mgmt_ip"],
                        "labels": {"site": "wan", "role": "wan"},
+                       # ECMP over the four border gateways hashes on layer 4 as well (policy 1). The kernel
+                       # default hashes source and destination address only, which pins every flow from one
+                       # client to one path, one DC and one node.
+                       "sysctls": {"net.ipv4.fib_multipath_hash_policy": 1},
                        "binds": [f"configs/{name}.conf:/etc/frr/frr.conf",
                                  f"configs/{name}.netdev.sh:/etc/frr/netdev.sh:ro",
                                  "static/frr/start.sh:/etc/frr/start.sh:ro",
