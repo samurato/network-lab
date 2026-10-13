@@ -130,10 +130,14 @@ resource "kubernetes_deployment_v1" "web" {
             }
           }
         }
+        # match_label_keys makes each constraint count only pods of the same ReplicaSet revision. Without it
+        # the old pods (still counted during a rolling update) skew the result, and the scheduler never
+        # rebalances afterwards: a roll left 3 pods in DC1 and 1 in DC2.
         topology_spread_constraint { # even split across the DCs
           max_skew           = 1
           topology_key       = "topology.kubernetes.io/zone"
           when_unsatisfiable = "DoNotSchedule"
+          match_label_keys   = ["pod-template-hash"]
           label_selector {
             match_labels = {
               app = "web"
@@ -144,6 +148,7 @@ resource "kubernetes_deployment_v1" "web" {
           max_skew           = 1
           topology_key       = "kubernetes.io/hostname"
           when_unsatisfiable = "DoNotSchedule"
+          match_label_keys   = ["pod-template-hash"]
           label_selector {
             match_labels = {
               app = "web"
