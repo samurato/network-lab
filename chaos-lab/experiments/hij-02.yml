@@ -1,0 +1,93 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=hij-02   Dry run: make dry EXP=hij-02
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'WAN underlay hijack: wan1 originates dc2-bgw1''s loopback and black-holes it'
+description: |
+  wan1 originates 10.2.0.15/32 (dc2-bgw1 Loopback0) with a shorter AS path than the real one. The BGWs' WAN-PEERS underlay sessions have no inbound filter, so DC1 prefers the hijack and its EVPN multi-site traffic to dc2-bgw1 dies at wan1.
+tags:
+- chaos-lab
+- wan
+- route-hijack-underlay
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: hij-02
+  layer: wan
+  fault: route-hijack-underlay
+  random: false
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - wan1
+  expected:
+  - dc1-bgw1/2 best path for 10.2.0.15/32 moves to wan1 only (AS path 64901 instead of 64901 65200)
+  - EVPN multi-site sessions dc1-bgw1/2 <-> dc2-bgw1 (10.2.0.15) drop
+  - DCI traffic to dc2-bgw1 black-holed; dc2-bgw2 paths still work
+  - 'fix direction: inbound prefix filtering on the BGW WAN-PEERS (only accept WAN infrastructure prefixes)'
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: originate-dc2-loopback-from-wan1
+  provider:
+    type: python
+    module: chaoslab.frr
+    func: configure
+    arguments:
+      node: wan1
+      lines:
+      - ip route 10.2.0.15/32 Null0
+      - router bgp 64901
+      - address-family ipv4 unicast
+      - network 10.2.0.15/32
+      undo:
+      - router bgp 64901
+      - address-family ipv4 unicast
+      - no network 10.2.0.15/32
+      - exit-address-family
+      - exit
+      - no ip route 10.2.0.15/32 Null0
+  pauses:
+    after: 15
+- type: probe
+  name: evidence-dc1-bgw1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: show
+    arguments:
+      node: dc1-bgw1
+      command: show ip bgp 10.2.0.15/32
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

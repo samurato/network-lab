@@ -1,0 +1,73 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=net-04   Dry run: make dry EXP=net-04
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: MTU mismatch on a DCI link (dc1-bgw1 Ethernet3 to wan1, 1400)
+description: |
+  The DCI link MTU is lowered below the VXLAN overhead. Small packets and BGP keep working; full-size DC1<->DC2 packets through this link are dropped. A classic silent black hole.
+tags:
+- chaos-lab
+- network
+- mtu-mismatch
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: net-04
+  layer: network
+  fault: mtu-mismatch
+  random: false
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - dc1-bgw1:Ethernet3
+  expected:
+  - net.if.ipv4_mtu 1400 on dc1-bgw1 Ethernet3 (intended 9214, peer wan1 eth1 unchanged)
+  - interface up, BGP up, routes unchanged
+  - large DC1<->DC2 flows (stretched VLAN 150, iperf3, cross-DC pod traffic) stall or lose throughput
+  - the change shows as drift on dc1-bgw1
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: lower-dci-mtu
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-bgw1
+      commands:
+      - interface Ethernet3
+      - mtu 1400
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

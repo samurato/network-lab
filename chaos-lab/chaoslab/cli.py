@@ -1,0 +1,110 @@
+"""chaos-lab command line (the Makefile wraps it).
+
+  python -m chaoslab.cli list
+  python -m chaoslab.cli run <id> [--dry]
+  python -m chaoslab.cli random [--dry]      Chaos Monkey mode: one random experiment marked `random: true`
+  python -m chaoslab.cli stop                undo every active fault now
+  python -m chaoslab.cli status
+"""
+import datetime
+import json
+import os
+import random
+import sys
+
+import yaml
+
+from chaoslab import config, state, watchdog
+from chaoslab.control import extension
+
+
+def experiments() -> dict:
+    out = {}
+    for f in sorted(config.EXPERIMENTS.glob("*.yml")):
+        exp = yaml.safe_load(f.read_text())
+        ext = extension(exp)
+        out[ext["id"]] = (f, exp, ext)
+    return out
+
+
+def cmd_list() -> None:
+    print(f"{'id':8} {'random':6} {'blast':5}  title")
+    for eid, (_, exp, ext) in experiments().items():
+        print(f"{eid:8} {'yes' if ext.get('random') else '':6} {ext.get('blast_radius', 1):<5}  {exp['title']}")
+
+
+def cmd_run(eid: str, dry: bool) -> None:
+    exps = experiments()
+    if eid not in exps:
+        sys.exit(f"unknown experiment {eid}; `make list`")
+    path = exps[eid][0]
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+    for d in ("journals", "logs"):
+        (config.STATE_DIR / d).mkdir(parents=True, exist_ok=True)
+    suffix = "-dry" if dry else ""
+    argv = [os.path.join(os.path.dirname(sys.executable), "chaos"),
+            "--log-file", str(config.STATE_DIR / "logs" / f"{stamp}-{eid}{suffix}.log"),
+            "run",
+            "--journal-path", str(config.STATE_DIR / "journals" / f"{stamp}-{eid}{suffix}.json"),
+            "--rollback-strategy", "always"]
+    env = dict(os.environ, PYTHONPATH=str(config.ROOT), PYTHONDONTWRITEBYTECODE="1")
+    if dry:
+        argv += ["--dry", "actions"]
+        env["CHAOSLAB_DRY"] = "1"
+    argv.append(str(path))
+    print(f"chaos-lab: {'dry run' if dry else 'RUN'} {eid}: {exps[eid][1]['title']}", flush=True)
+    os.execve(argv[0], argv, env)
+
+
+def cmd_random(dry: bool) -> None:
+    eligible = [eid for eid, (_, _, ext) in experiments().items() if ext.get("random")]
+    eid = random.choice(eligible)
+    print(f"chaos-lab: random pick from {len(eligible)} eligible experiments", flush=True)
+    cmd_run(eid, dry)
+
+
+def cmd_stop() -> None:
+    run = state.current()
+    if run:
+        watchdog.disarm(run.get("watchdog_pid"))
+    done = state.rollback()
+    for what in done:
+        print(f"rolled back: {what}")
+    if run:
+        state.finish_run("stopped")
+    print("chaos-lab: nothing active" if not state.active() else "chaos-lab: some faults are still active")
+
+
+def cmd_status() -> None:
+    run = state.current()
+    print("current run:", json.dumps(run, indent=2) if run else "none")
+    act = state.active()
+    print(f"active faults: {len(act)}")
+    for f in act:
+        print(f"  {f['at']}  {f['what']}")
+    print("recent runs:")
+    for r in state.history(5):
+        print(f"  {r['run_id']:40} {r.get('status', ''):18} recovered={r.get('recovered')}"
+              f" in {r.get('recovery_seconds')}s")
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    dry = "--dry" in args
+    args = [a for a in args if a != "--dry"]
+    if not args or args[0] == "list":
+        cmd_list()
+    elif args[0] == "run" and len(args) == 2:
+        cmd_run(args[1], dry)
+    elif args[0] == "random":
+        cmd_random(dry)
+    elif args[0] == "stop":
+        cmd_stop()
+    elif args[0] == "status":
+        cmd_status()
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()

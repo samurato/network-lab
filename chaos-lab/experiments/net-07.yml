@@ -1,0 +1,73 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=net-07   Dry run: make dry EXP=net-07
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'VXLAN VNI mismatch: VLAN 110 mapped to the wrong VNI on dc1-leaf2'
+description: |
+  One leaf maps VLAN 110 to VNI 19110 instead of 10110. Hosts on that leaf lose layer-2 reachability to VLAN 110 everywhere else, while everything looks up.
+tags:
+- chaos-lab
+- network
+- evpn-vni-mismatch
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: net-07
+  layer: network
+  fault: evpn-vni-mismatch
+  random: false
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - dc1-leaf2
+  expected:
+  - VLAN 110 -> VNI 19110 on dc1-leaf2 vs 10110 on every other VTEP (logs-gnmi.state, vlan-to-vnis)
+  - EVPN routes for VNI 10110 from dc1-leaf2 withdrawn; new VNI 19110 with no remote VTEPs
+  - dc1-web2 (dc1-leaf2, VLAN 110) cannot reach dc1-web1 (dc1-leaf1); MACs age out
+  - no interface or BGP change
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: remap-vni
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-leaf2
+      commands:
+      - interface Vxlan1
+      - vxlan vlan 110 vni 19110
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

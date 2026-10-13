@@ -1,0 +1,84 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=net-01   Dry run: make dry EXP=net-01
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: Leaf uplink down (dc1-leaf1 Ethernet1 to dc1-spine1)
+description: |
+  A fabric link fails hard. ECMP should absorb it: traffic moves to the other spine, nothing user-visible.
+tags:
+- chaos-lab
+- network
+- link-down
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: net-01
+  layer: network
+  fault: link-down
+  random: true
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - dc1-leaf1:Ethernet1
+  expected:
+  - net.if.oper_status 0 on dc1-leaf1 Ethernet1 and dc1-spine1 Ethernet1
+  - 'OSPF routes on dc1-leaf1 lose the next hop via Ethernet1 (logs-gnmi.state: route next-hop changes)'
+  - traffic counters shift to dc1-leaf1 Ethernet2 (dc1-spine2)
+  - no BGP session loss, web unaffected
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: shut-leaf-uplink
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-leaf1
+      commands:
+      - interface Ethernet1
+      - shutdown
+  pauses:
+    after: 15
+- type: probe
+  name: evidence-dc1-leaf1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: show
+    arguments:
+      node: dc1-leaf1
+      command: show ip route 10.1.0.1
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

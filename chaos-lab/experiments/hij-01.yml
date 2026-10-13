@@ -1,0 +1,113 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=hij-01   Dry run: make dry EXP=hij-01
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'WAN route hijack: wan1 originates the public VIP 192.0.2.10/32 and attacker1 answers'
+description: |
+  wan1 (AS 64901) originates the exact public VIP with a one-hop AS path, beating the real two-hop path from the BGWs. Internet users behind wan2 are sent to attacker1, which answers HTTP 200 with a fake page. The DCs are safe (the BGWs' PL-WAN-PROD-IN rejects 192.0.2.0/24 from the WAN), but the WAN itself has no origin validation.
+tags:
+- chaos-lab
+- wan
+- route-hijack-exact
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: hij-01
+  layer: wan
+  fault: route-hijack-exact
+  random: false
+  blast_radius: 2
+  extra_seconds: 0
+  targets:
+  - wan1
+  - attacker1
+  expected:
+  - wan2 best path for 192.0.2.10/32 (VRF PROD) changes from the BGWs (AS 65100/65200 ...) to wan1 (AS 64901)
+  - 'Internet users get HTTP 200 but from attacker1: web request rate from the WAN drops to zero in the app traces while k6
+    reports success'
+  - 'the BGWs log the route as rejected/filtered: DC routing unchanged'
+  - drift on wan1 (static route + network statement)
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: attacker-fake-web
+  provider:
+    type: python
+    module: chaoslab.attacker
+    func: fake_web
+    arguments:
+      ip: 192.0.2.10
+- type: action
+  name: originate-vip-from-wan1
+  provider:
+    type: python
+    module: chaoslab.frr
+    func: configure
+    arguments:
+      node: wan1
+      lines:
+      - vrf PROD
+      - ip route 192.0.2.10/32 203.0.113.66
+      - exit-vrf
+      - router bgp 64901 vrf PROD
+      - address-family ipv4 unicast
+      - network 192.0.2.10/32
+      undo:
+      - router bgp 64901 vrf PROD
+      - address-family ipv4 unicast
+      - no network 192.0.2.10/32
+      - exit-address-family
+      - exit
+      - vrf PROD
+      - no ip route 192.0.2.10/32 203.0.113.66
+      - exit-vrf
+  pauses:
+    after: 15
+- type: probe
+  name: evidence-wan2
+  provider:
+    type: python
+    module: chaoslab.frr
+    func: show
+    arguments:
+      node: wan2
+      command: show ip bgp vrf PROD 192.0.2.10/32
+- type: probe
+  name: evidence-internet-user
+  provider:
+    type: python
+    module: chaoslab.probes
+    func: http_body
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

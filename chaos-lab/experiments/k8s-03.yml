@@ -1,0 +1,72 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=k8s-03   Dry run: make dry EXP=k8s-03
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: Kubernetes node cut off from the fabric (dc1-k8s-wk2 eth1, 100% loss)
+description: |
+  The node's only fabric link drops everything while staying up. Its BGP session to dc1-leaf4 times out, and the node goes NotReady. Management (eth0) is untouched.
+tags:
+- chaos-lab
+- kubernetes
+- node-isolation
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: k8s-03
+  layer: kubernetes
+  fault: node-isolation
+  random: true
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - dc1-k8s-wk2:eth1
+  expected:
+  - 'dc1-leaf4: BGP session to dc1-k8s-wk2 (10.10.40.5) drops after the hold time; pod CIDR 10.11.2.0/24 withdrawn'
+  - 'Kubernetes: node dc1-k8s-wk2 NotReady'
+  - dc1-leaf4 Ethernet7 stays up
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: isolate-node
+  provider:
+    type: python
+    module: chaoslab.netem
+    func: impair
+    arguments:
+      node: dc1-k8s-wk2
+      interfaces:
+      - eth1
+      loss: 100
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

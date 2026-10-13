@@ -1,0 +1,71 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=k8s-01   Dry run: make dry EXP=k8s-01
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: Web pod killed
+description: |
+  One random web pod is deleted. The deployment replaces it; with externalTrafficPolicy Local, the node may withdraw its VIP /32 for a moment.
+tags:
+- chaos-lab
+- kubernetes
+- pod-kill
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: k8s-01
+  layer: kubernetes
+  fault: pod-kill
+  random: true
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - k8s:prod/web
+  expected:
+  - 'Kubernetes event: pod deleted and recreated'
+  - possible short VIP /32 withdraw / re-advertise from that node (BGP prefixes on its leaf)
+  - brief dip in web traces from that pod
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: delete-web-pod
+  provider:
+    type: python
+    module: chaoslab.k8s
+    func: delete_pods
+    arguments:
+      namespace: prod
+      selector: app=web
+      count: 1
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

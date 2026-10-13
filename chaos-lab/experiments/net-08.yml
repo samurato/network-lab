@@ -1,0 +1,84 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=net-08   Dry run: make dry EXP=net-08
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'DCI congestion: iperf3 from DC1 to DC2 pods (4 x 100 Mbit/s for 300 s)'
+description: |
+  Bulk traffic across the EVPN multi-site DCI. Watch the BGW and WAN link utilisation and whether web latency suffers.
+tags:
+- chaos-lab
+- network
+- congestion
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: net-08
+  layer: network
+  fault: congestion
+  random: true
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - k8s:prod/iperf3-dc1
+  expected:
+  - octet rate up on the DC1 BGW <-> WAN links and the DC2 BGWs (net.if.in_octets / out_octets)
+  - 'top talker: iperf3-dc1 pod (10.11.x) -> iperf3-dc2 pod (10.21.x), TCP 5201'
+  - no protocol change
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: start-iperf3
+  provider:
+    type: python
+    module: chaoslab.k8s
+    func: exec_background
+    arguments:
+      namespace: prod
+      target: deploy/iperf3-dc1
+      command:
+      - iperf3
+      - -c
+      - iperf3-dc2
+      - -t
+      - '300'
+      - -P
+      - '4'
+      - -b
+      - 100M
+      stop:
+      - pkill
+      - -f
+      - iperf3 -c
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

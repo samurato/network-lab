@@ -1,0 +1,71 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=k8s-05   Dry run: make dry EXP=k8s-05
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'Noisy neighbour: CPU and memory stress on dc1-k8s-wk1'
+description: |
+  A throwaway pod burns 4 CPUs and holds 1 GiB on a node that runs web pods.
+tags:
+- chaos-lab
+- kubernetes
+- resource-stress
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: k8s-05
+  layer: kubernetes
+  fault: resource-stress
+  random: false
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - dc1-k8s-wk1
+  expected:
+  - a pod in namespace chaos on dc1-k8s-wk1
+  - web latency from dc1-k8s-wk1 pods may rise
+  - no network symptom
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: stress-node
+  provider:
+    type: python
+    module: chaoslab.k8s
+    func: stress
+    arguments:
+      node: dc1-k8s-wk1
+      cpus: 4
+      memory_mb: 1024
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

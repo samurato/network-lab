@@ -1,0 +1,74 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=k8s-04   Dry run: make dry EXP=k8s-04
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: Cilium agent restart on dc1-k8s-wk1
+description: |
+  The Cilium agent pod on a node that runs web pods is deleted. Its BGP speaker restarts, so the leaf sees the session drop and the pod CIDR / VIP routes re-learned.
+tags:
+- chaos-lab
+- kubernetes
+- cni-restart
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: k8s-04
+  layer: kubernetes
+  fault: cni-restart
+  random: true
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - k8s:kube-system/cilium
+  - dc1-k8s-wk1
+  expected:
+  - 'dc1-leaf3: BGP session to dc1-k8s-wk1 (10.10.40.3) resets'
+  - pod CIDR 10.11.1.0/24 and VIP /32s withdrawn then re-advertised
+  - 'Kubernetes event: cilium pod recreated'
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: delete-cilium-agent
+  provider:
+    type: python
+    module: chaoslab.k8s
+    func: delete_pods
+    arguments:
+      namespace: kube-system
+      selector: k8s-app=cilium
+      count: 1
+      nodes:
+      - dc1-k8s-wk1
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

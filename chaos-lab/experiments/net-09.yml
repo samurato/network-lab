@@ -1,0 +1,83 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=net-09   Dry run: make dry EXP=net-09
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'Spine isolated: 100% loss on every fabric link of dc1-spine2'
+description: |
+  dc1-spine2 silently drops everything on all fabric links while its interfaces stay up: a hung line card. OSPF and the EVPN route-reflector sessions to it time out on every DC1 leaf and BGW.
+tags:
+- chaos-lab
+- network
+- device-loss
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: net-09
+  layer: network
+  fault: device-loss
+  random: false
+  blast_radius: 6
+  extra_seconds: 0
+  targets:
+  - dc1-spine2:eth1
+  - dc1-spine2:eth2
+  - dc1-spine2:eth3
+  - dc1-spine2:eth4
+  - dc1-spine2:eth5
+  - dc1-spine2:eth6
+  expected:
+  - 'every DC1 leaf and BGW: EVPN session to 10.1.0.2 (dc1-spine2) drops after the hold time'
+  - OSPF routes via dc1-spine2 withdrawn everywhere in DC1
+  - 'all interfaces stay up: the device is unreachable, not down'
+  - traffic converges on dc1-spine1
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: blackhole-spine
+  provider:
+    type: python
+    module: chaoslab.netem
+    func: impair
+    arguments:
+      node: dc1-spine2
+      interfaces:
+      - eth1
+      - eth2
+      - eth3
+      - eth4
+      - eth5
+      - eth6
+      loss: 100
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

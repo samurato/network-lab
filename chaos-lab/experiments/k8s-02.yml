@@ -1,0 +1,86 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=k8s-02   Dry run: make dry EXP=k8s-02
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'Web capacity lost in DC1: DC1 nodes cordoned, DC1 web pods deleted'
+description: |
+  All web pods in DC1 go away and cannot come back there; the topology spread constraint keeps their replacements Pending. DC1 stops announcing the VIPs and DC2 carries everything.
+tags:
+- chaos-lab
+- kubernetes
+- zone-loss
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: k8s-02
+  layer: kubernetes
+  fault: zone-loss
+  random: false
+  blast_radius: 4
+  extra_seconds: 0
+  targets:
+  - k8s:prod/web
+  - dc1-k8s-cp1
+  - dc1-k8s-wk1
+  - dc1-k8s-wk2
+  expected:
+  - 'web deployment: ready < desired, Pending pods (topology spread, cordoned nodes)'
+  - VIP /32s withdrawn by DC1 leaves (externalTrafficPolicy Local)
+  - all web traces from DC2 pods
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: cordon-dc1
+  provider:
+    type: python
+    module: chaoslab.k8s
+    func: cordon
+    arguments:
+      nodes: &id001
+      - dc1-k8s-cp1
+      - dc1-k8s-wk1
+      - dc1-k8s-wk2
+- type: action
+  name: delete-dc1-web-pods
+  provider:
+    type: python
+    module: chaoslab.k8s
+    func: delete_pods
+    arguments:
+      namespace: prod
+      selector: app=web
+      count: 0
+      nodes: *id001
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

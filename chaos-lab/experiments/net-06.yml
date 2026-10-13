@@ -1,0 +1,74 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=net-06   Dry run: make dry EXP=net-06
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'OSPF underlay adjacency lost: authentication mismatch on dc1-leaf3 Ethernet1'
+description: |
+  One side of a fabric link gets OSPF MD5 authentication, the other does not. The adjacency dies after the dead interval; the interface stays up.
+tags:
+- chaos-lab
+- network
+- ospf-underlay
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: net-06
+  layer: network
+  fault: ospf-underlay
+  random: true
+  blast_radius: 1
+  extra_seconds: 0
+  targets:
+  - dc1-leaf3:Ethernet1
+  expected:
+  - OSPF routes via dc1-leaf3 Ethernet1 withdrawn after ~40 s (logs-gnmi.state), LSA count changes
+  - 'interface stays up (oper-status 1): a protocol fault, not a link fault'
+  - traffic from dc1-leaf3 moves to Ethernet2 (dc1-spine2)
+  - config drift on dc1-leaf3 (ip ospf authentication)
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: ospf-auth-mismatch
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-leaf3
+      commands:
+      - interface Ethernet1
+      - ip ospf authentication message-digest
+      - ip ospf message-digest-key 1 md5 0 chaoslab
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback
