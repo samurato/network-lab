@@ -11,7 +11,7 @@
                      configs/<router>.conf      full FRR config
                      configs/<router>.netdev.sh kernel devices FRR needs (VRF, 802.1Q sub-interfaces)
                      static/k8s/entrypoint.sh   k3s node entrypoint (copy of kubernetes/node/entrypoint.sh)
-                     telemetry/gnmic/*.yml      gNMI targets + used-port filter
+                     telemetry/gnmic/gnmic.yml  gNMI targets + used-port filter
                      telemetry/state/           runtime: gnmic's state file + collector offsets (shared bind)
                      telemetry/otelcol/profile.yml  default collector profile (= local.yml)
                    and generated/lab-inventory.yml (FRR WAN + hosts, for make apply),
@@ -429,8 +429,8 @@ def post() -> None:
         "name": d, "insecure": True,
         "event-tags": {"site": nodes[d]["labels"]["site"], "role": nodes[d]["labels"]["role"], "vendor": "arista"}}
         for d in sc}
-    dump(CLAB / "telemetry" / "gnmic" / "targets.yml", targets)
     gn = load(AUTOMATION / "telemetry" / "gnmic.base.yml")
+    gn["targets"] = targets
     # drop interface series for ports a device doesn't use (cEOS exposes 16 Ethernet ports)
     unused = "\n  or ".join(
         f'(.tags.source == "{d}" and (.tags.interface_name | IN({", ".join(f'"{p}"' for p in ports)}) | not))'

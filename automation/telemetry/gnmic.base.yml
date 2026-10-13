@@ -10,10 +10,9 @@
 # Metric catalogue (short name <- gNMI path) and the state document fields: docs/telemetry.md.
 encoding: json_ietf
 log: true
-loader:
-  type: file
-  path: /etc/gnmic/targets.yml   # containerlab/telemetry/gnmic/targets.yml
-  interval: 30s
+# targets: written in by automation/render.py (one per switch, with its tags). Not a file loader: gnmic 0.49's
+# loader saw every target as changed on each reload and re-subscribed all of them every 30 s, which made the
+# switches resend their whole state (routes, MACs) each time. A target change is a `make sync`, which restarts gnmic.
 
 subscriptions:
   # ---- metrics

@@ -83,7 +83,6 @@ Everything is generated from the repo; nothing on the host is hand-edited.
 | `containerlab/telemetry/otelcol/elastic-otlp.yml` | **yes** | profile `elastic-otlp`: OTLP to a Managed OTLP endpoint (for later) |
 | `containerlab/telemetry/otelcol/local.yml` | **yes** | profile `local`: nothing exported |
 | `containerlab/telemetry/otelcol/profile.yml` | no, generated | copy of `local.yml`; `automation/lab` overwrites it in the running bundle |
-| `containerlab/telemetry/gnmic/targets.yml` | no, generated | one target per switch with its tags |
 | `containerlab/telemetry/gnmic/gnmic.yml` | no, generated | the base file plus the per-device `used-ports` filter |
 | `automation/render.py` (section `# ---- telemetry`) | code | builds the generated files and the `gnmic` and `otelcol` nodes in `netops.clab.yml` |
 | `automation/lab` (`collector_profile`) | code | picks the collector profile, writes the Elastic secrets into the bundle, restarts changed telemetry nodes |
@@ -95,7 +94,7 @@ Everything is generated from the repo; nothing on the host is hand-edited.
 flowchart LR
   NET["network/<br/>inventory + group_vars"] --> R["make build<br/>(render.py)"]
   BASE["automation/telemetry/<br/>gnmic.base.yml"] --> R
-  R --> T["containerlab/telemetry/gnmic/<br/>targets.yml + gnmic.yml"]
+  R --> T["containerlab/telemetry/gnmic/<br/>gnmic.yml (targets inside)"]
   OCF["containerlab/telemetry/otelcol/*.yml"] --> B
   T --> B["make sync / make apply<br/>~/clab-runs/netops-bundle"]
   B --> RUN["running gnmic + otelcol<br/>(bind-mounted, read-only)"]
@@ -152,9 +151,11 @@ container send samples at all? **Yes:** hardware samples count up in `show sflow
 
 ## 4. gnmic: the collector
 
-One gnmic container holds a long-lived subscription to every target. The target file is reloaded every
-30 s, so new or removed targets are picked up without a restart. Subscription changes need a restart; see
-[Operating it](#8-operating-it).
+One gnmic container holds a long-lived subscription to every target. The targets are written into
+`gnmic.yml` by `make build`; any change (targets or subscriptions) is applied by `make sync`, which restarts
+gnmic. There is deliberately no target file loader: gnmic 0.49's loader saw every target as changed on each
+30 s reload and re-subscribed all of them, so the switches resent their whole state (every route and MAC) twice
+a minute. See [Operating it](#8-operating-it).
 
 ### Subscriptions
 
@@ -262,7 +263,7 @@ logs:       otlp, file_log/gnmi_state -> memory_limiter -> transform/gnmi_state 
 | `host.name` | resource | `dc1-leaf1` | collector (`= source`) |
 | `device` | resource | `dc1-leaf1` | collector (`= source`) |
 | `source` | resource | `dc1-leaf1` | gnmic target name |
-| `site` | resource | `dc1`, `dc2` | inventory, via `targets.yml` |
+| `site` | resource | `dc1`, `dc2` | inventory, via the targets in `gnmic.yml` |
 | `role` | resource | `spine`, `leaf`, `bgw` | inventory |
 | `vendor` | resource | `arista` | render.py |
 | `lab` | resource | `netops` | collector |
