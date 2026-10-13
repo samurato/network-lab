@@ -39,6 +39,8 @@ edge_hosts:
     env:
       TARGET: http://192.0.2.10
       RPS: "5"
+    ports:
+      - "8088:80"            # published on the lab host: the edge proxy below (inet-web) listens here
   attacker1:                 # isolated "botnet": nping / iperf3 / curl, rate-capped, no Internet egress
     router: wan1
     port: eth7
@@ -47,3 +49,12 @@ edge_hosts:
     role: attacker
     rate_limit: 20mbit       # tc cap on the host's uplink: floods can't swamp the lab host
     run: idle.sh             # tools on demand: docker exec clab-netops-attacker1 nping ...
+
+# Edge proxies: a browser's way into the lab through the real path.  It shares the host's network
+# namespace (source address 198.51.100.11, already allowed back through every BGW route-map), forwards
+# to the public VIP, and answers with the "network down" page when the path breaks.
+# Reach it with: ssh -L 8088:127.0.0.1:8088 <lab host>, then http://localhost:8088
+edge_proxies:
+  inet-web:
+    host: inet-k6
+    image: nginx:1.30.5-alpine

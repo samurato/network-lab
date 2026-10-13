@@ -194,6 +194,16 @@ For a public VIP, test from the Internet side:
 
 ## Viewing your app from a laptop
 
+**Through the real path (public VIP):** `inet-web`, an nginx in the Internet-user host's namespace, listens on
+the lab host's port 8088 and forwards to `192.0.2.10`, so the page crosses WAN, border gateway, leaf and node
+like any user, and shows the "network down" page when that path breaks:
+```bash
+ssh -N -L 8088:127.0.0.1:8088 samrat@192.168.20.56      # then open http://localhost:8088
+```
+Refresh and the footer shows which node and pod answered (`X-Served-By` header, `/api/stats`).
+
+**Directly to one node (management network, bypasses the fabric):**
+
 The VIPs live inside the lab. Tunnel to your service's NodePort on any node that runs one of its pods:
 ```bash
 automation/k8s kubectl -n prod get svc hello -o jsonpath='{.spec.ports[0].nodePort}'   # e.g. 31234

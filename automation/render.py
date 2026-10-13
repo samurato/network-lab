@@ -392,6 +392,18 @@ def post() -> None:
                        "entrypoint": "/bin/sh", "cmd": f"/generators/{h['run']}", "exec": setup}
         if not nodes[name]["env"]:
             del nodes[name]["env"]
+        if h.get("ports"):          # published on the lab host (a proxy below shares this host's namespace)
+            nodes[name]["ports"] = h["ports"]
+    # Edge proxies: a reverse proxy in an edge host's network namespace, so a browser outside the lab enters
+    # at the WAN edge and crosses WAN -> border gateway -> leaf -> node like any Internet user.  The page
+    # (and its "network down" page) goes through the same fabric as k6; nothing here bypasses it.
+    for name, pxy in wan.get("edge_proxies", {}).items():
+        host = pxy["host"]
+        nodes[name] = {"kind": "linux", "image": pxy["image"], "network-mode": f"container:{host}",
+                       "labels": {"site": "wan", "role": "traffic"},
+                       "binds": ["static/proxy/nginx.conf:/etc/nginx/nginx.conf:ro",
+                                 "static/proxy/down.html:/usr/share/nginx/html/down.html:ro"]}
+        attached[name] = attached[host]
     # EDOT Collector (Elastic's OTel distribution).  profile.yml is the `local` profile here; automation/lab
     # overwrites it in the running bundle with elastic.yml / elastic-otlp.yml and writes the Elastic URL and
     # key into telemetry/otelcol/secrets/ (never committed, never in the container environment).
