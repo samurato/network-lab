@@ -23,20 +23,23 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 
 ---
 
-## Where we are (2026-10-13)
+## Where we are (2026-10-14)
 
 | Works | Missing |
 |---|---|
-| gnmic → EDOT Collector → Kafka → Elastic: interface counters, oper-status, MTU, BGP state and prefixes, OSPF LSA count, LLDP, memory, in `metrics-gnmi.otel-default` (short `net.*` names, about 1,900 series) | OSPF neighbour state (not in cEOS gNMI), syslog, FRR WAN, hosts |
+| gnmic → EDOT Collector → Kafka → Elastic: interface counters, oper-status, MTU, BGP state and prefixes, OSPF LSA count, LLDP, memory, in `metrics-gnmi.otel-default` (short `net.*` names, about 1,900 series); port, BGP and LLDP state also sampled every 30 s | OSPF neighbour state (not in cEOS gNMI), syslog (cEOS cause found, Step 7), FRR syslog and metrics |
 | Every route, BGP, port, LLDP, VTEP, VNI and MAC change in `logs-gnmi.state.otel-default` | |
-| The `web` pods' traces, metrics and logs reach Elastic (`traces-generic.otel-default`) | Kubernetes, Cilium, Hubble |
-| `change-event.sh` writes ECS change events to `logs-netops.changes-default` | Context indices (topology, IP map, intent), alert rules, SLOs, dashboards |
-| `elastic/terraform/`: data stream templates, Kibana space `netops`, data views, dashboards | Flows: cEOS sFlow works (step 5 test on dc1-leaf1); no flow collector yet (step 10) |
-| Switches: OpenConfig route tables (AFT) on, clock Australia/Sydney, sFlow test on dc1-leaf1 | Switch syslog: configured, but rsyslog inside cEOS crash-loops on this host, so nothing is sent (step 7) |
-| `make verify` checks freshness in Elastic with ES\|QL | |
+| WAN routes over BMP (`logs-bgp.bmp.otel-default`): the route-hijack view the switches never see | |
+| Kubernetes (Step 11): node / pod / container metrics, cluster state, events, container logs (`metrics-k8s.*`, `logs-k8s.*`) | Cilium, Hubble (Step 12) |
+| The `web` pods' traces reach Elastic (`traces-generic.otel-default`) | k6 results, Synthetics (Step 14) |
+| `change-event.sh` writes ECS change events to `logs-netops.changes-default` | Context indices (topology, IP map, intent), drift results, alert rules, SLOs |
+| Dashboards as code: Fabric health, Web app, Pipeline & changes, **Link failures**, **Fault impact**; **Chaos · Command center** in its own space (chaos-lab, `logs-chaos.*`) | WAN and Kubernetes dashboards |
+| Switches: OpenConfig route tables (AFT) on, clock Australia/Sydney, sFlow test on dc1-leaf1 | Flows: no collector yet (Step 10) |
+| `make verify` checks freshness in Elastic with ES\|QL, now including Kubernetes | |
 
-**Lab status:** running since 2026-10-13 (brought back with `make up` for Step 6, redeployed for the new telemetry
-binds; `make verify` 0 FAIL). Telemetry reaches Elastic through a Kafka buffer (24 h). **Next:** Step 7 (syslog and FRR WAN telemetry).
+**Lab status:** redeployed 2026-10-14 after the lab VM was powered off from outside (03:14 UTC, back 11:20 UTC; nothing
+in the guest caused it). `make verify` 0 FAIL. **Next:** Step 7 rest (FRR syslog and metrics; check cEOS syslog after the
+AppArmor fix), then Steps 8 and 9.
 
 The Elastic project is **Serverless, Elasticsearch type** (no Managed OTLP endpoint, no Observability apps).
 The collector writes straight to Elasticsearch and is ready for a Managed OTLP endpoint
@@ -192,8 +195,12 @@ In `automation/telemetry/gnmic.base.yml`:
   switches never see because the BGWs filter it. Pre-policy is not monitored: without an adj-rib-in copy FRR
   reports it inaccurately.
 
-**Blocked for cEOS:** rsyslog crash-loops inside cEOS on this host (Step 5), so the switches send no syslog
-yet. FRR and Linux syslog are not affected. Until cEOS rsyslog is fixed, switch events come from gNMI on-change
+**cEOS blocker, root cause found 2026-10-14:** the lab host's AppArmor profile for `/usr/sbin/rsyslogd` also
+confines the rsyslogd inside every (privileged) cEOS container, which may not create its pid file
+(`apparmor="DENIED" operation="mknod" profile="rsyslogd" name="/run/syslogd.pid.tmp"`, 333,531 times in one boot), so
+it dies and restarts in a loop. Fixed on the host (owner, sudo): the profile is disabled
+(`/etc/apparmor.d/disable/usr.sbin.rsyslogd`, `apparmor_parser -R`). Still to do: confirm cEOS syslog starts, and put
+the fix in `automation/bootstrap.sh`. Before the fix: the switches sent no syslog. FRR and Linux syslog are not affected. Until cEOS rsyslog is fixed, switch events come from gNMI on-change
 state (oper-status, BGP session state), which already reaches Elastic. The EDOT Collector has no `syslog`
 receiver: use `filebeatreceiver` with a `syslog` / `udp` input, and `location: Australia/Sydney` for
 RFC 3164 senders.
@@ -241,13 +248,22 @@ RFC 3164 senders.
 ## Phase P4 – Kubernetes and Cilium
 
 ### Step 11 – EDOT in the cluster
-- [ ] New `kubernetes/terraform/observability.tf`: a `helm_release` for Elastic's OpenTelemetry kube-stack chart, pinned. It runs:
-  - a DaemonSet: kubeletstats, filelog for container logs, OTLP;
-  - a cluster collector: k8s_cluster metrics, k8s events.
-- [ ] It exports to the lab gateway `172.20.20.250` over eth0 (the management network), not across the fabric.
-- [ ] Point the `web` app's `OTEL_EXPORTER_OTLP_ENDPOINT` (in `apps.tf`) at the node-local collector.
+- [x] New `kubernetes/terraform/observability.tf` (namespace `otel`), the gateway's EDOT Collector image side-loaded into
+  every node (`nodes.tf`, image from `generated/kubernetes.yml`):
+  - `otel-agent` DaemonSet: `kubelet_stats` → `metrics-k8s.kubelet`, `file_log` on `/var/log/pods` → `logs-k8s.container`,
+    `k8s_attributes`;
+  - `otel-cluster` Deployment: `k8s_cluster` → `metrics-k8s.cluster`, `k8s_events` → `logs-k8s.events`.
+  Plain manifests instead of the kube-stack / collector Helm charts: their presets use component names this EDOT
+  version renamed (`kubelet_stats`, `k8s_attributes`, `file_log`, `otlp_grpc`), and the operator is not needed.
+- [x] It exports to the lab gateway `172.20.20.250:4317` over eth0 (the management network), not across the fabric.
+- [x] Templates and retention for the four data streams (`data-streams.tf`); `make verify` checks them. The lab key's
+  read now includes `metrics-k8s.*.otel-*` (`security.tf`); the owner updates the existing key in Kibana.
+- [ ] Point the `web` app's `OTEL_EXPORTER_OTLP_ENDPOINT` (in `apps.tf`) at the node-local collector (later: only adds
+  `k8s_attributes` to the traces, which already carry `k8s.node.name`).
 
-**Done when:** `kubectl delete pod` on a web pod shows up in `logs-k8s.events` within 15 seconds.
+**Done when:** `kubectl delete pod` on a web pod shows up in `logs-k8s.events` within 15 seconds. *Seen on apply: a
+collector rollout's Killing / Scheduled / Pulled / Started events arrived within seconds; the web-pod drill is chaos-lab
+`k8s-01`.*
 
 ### Step 12 – Cilium and Hubble
 - [ ] `kubernetes/terraform/cilium.tf`:
@@ -294,8 +310,9 @@ RFC 3164 senders.
 - [ ] SLOs: web availability and latency.
 - [ ] ML anomaly detection jobs: interface errors and utilisation; trace latency.
 - [ ] Dashboards: fabric, WAN, k8s/Cilium, and an app → network drill-down. *Started early (2026-10-12): fabric,
-  web app and pipeline dashboards in `elastic/terraform/dashboards.tf`; WAN, k8s/Cilium and the drill-down come
-  with their data.*
+  web app and pipeline dashboards in `elastic/terraform/dashboards.tf`; 2026-10-13: Link failures, Fault impact
+  and the Chaos command center (`dashboards-faults.tf`, `dashboards-chaos.tf`). WAN, k8s/Cilium and the drill-down
+  come with their data.*
 
 **Done when:** every fault drill below raises its alert.
 
@@ -320,6 +337,9 @@ RFC 3164 senders.
 ## Progress log
 | Date | Step | PR | Notes |
 |---|---|---|---|
+| 2026-10-14 | 11 | (this PR) | Kubernetes telemetry: in-cluster EDOT (`otel-agent` DaemonSet, `otel-cluster` Deployment) → gateway → `metrics-k8s.kubelet` (6/6 nodes), `metrics-k8s.cluster`, `logs-k8s.events`, `logs-k8s.container`. Also: lab VM powered off from outside 03:14–11:20 UTC (no guest cause), redeployed; cEOS rsyslog crash loop traced to the host's AppArmor rsyslogd profile (disabled by the owner) |
+| 2026-10-14 | 7 (part) | #22 | WAN BMP from wan1/wan2 (pmbmpd) → `logs-bgp.bmp.otel-default` |
+| 2026-10-13 | 16 (part), chaos | #16, #20 | 30 s samples of port / BGP / LLDP state (on-change alone left "now" panels empty); dashboards Link failures, Fault impact, Chaos · Command center; chaos-lab (18 experiments, traffic, detection scorecard, `logs-chaos.*` with the lab key) |
 | 2026-10-13 | Kafka buffer | (this PR) | Kafka (`apache/kafka:3.9.1`, one KRaft broker, 172.20.20.252) between the collector and Elastic: receive pipelines → `kafka/out` → topics → `kafka/elastic` → `elasticsearch/elastic`, offsets committed after Elastic accepted. Outage test: Elastic unreachable 3½ min, lag 113 messages, drained in ~50 s, no gap. `make verify` checks the consumer lag (67 PASS) |
 | 2026-10-13 | 6 | #12 | gnmic: AFT routes, EVPN/VXLAN, MTU, OSPF LSA count; CPU dropped; short `net.*` names; state changes → `logs-gnmi.state` via a shared file and `file_log`. 1,897 series (was ~3,600). Found: no OSPF neighbour state over gNMI on cEOS 4.36; `in` is an ES\|QL keyword; logsdb hides a record-level `host.name` (moved to the resource); gnmic file loader re-subscribing every 30 s (removed); exporter queue too small (sized). Withdraw drill passed. `make verify` 0 FAIL |
 | 2026-10-13 | – | – | Lab shut down. Next: Step 6. Open: cEOS rsyslog crash loop (step 7), leftover `metrics-prometheusreceiver.otel-default` data stream from the first test |

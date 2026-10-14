@@ -258,6 +258,23 @@ metrics/elastic, traces/elastic, logs/elastic:  kafka/elastic -> memory_limiter 
 
 ---
 
+### Kubernetes: collectors inside the cluster
+
+`kubernetes/terraform/observability.tf` runs the same EDOT Collector image inside the k3s cluster (namespace `otel`),
+sending OTLP to this gateway over each node's management interface, never across the fabric:
+
+| Collector | Kind | Receivers | Data stream |
+|---|---|---|---|
+| `otel-agent` | DaemonSet, every node (WAN tie-breaker included) | `kubelet_stats` (node, pod, container; 30 s) | `metrics-k8s.kubelet.otel-default` |
+| | | `file_log` on `/var/log/pods` (CRI parser; not the collectors' own logs) | `logs-k8s.container.otel-default` |
+| `otel-cluster` | Deployment, 1 replica | `k8s_cluster` (30 s) | `metrics-k8s.cluster.otel-default` |
+| | | `k8s_events` | `logs-k8s.events.otel-default` |
+
+`k8s_attributes` adds namespace, pod, deployment and the `app` label; `host.name` is the node (as it is the switch on
+the network data). Plain manifests rather than the upstream Helm chart: its presets emit component names this EDOT
+version renamed (`kubelet_stats`, `k8s_attributes`, `file_log`, `otlp_grpc`). The gateway passes these through
+unchanged (each collector sets its own `data_stream.dataset`).
+
 ## 6. Data reference
 
 ### Attributes on every gNMI series

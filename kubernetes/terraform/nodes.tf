@@ -23,25 +23,32 @@ resource "terraform_data" "pod_cidr" {
   }
 }
 
-# Lab-built images that exist only in the host's Docker (e.g. the web app): copy them into each workload
-# node's containerd.  Re-runs when the image changes in Docker.
+# Images copied from the host's Docker into the nodes' containerd: lab-built ones that exist nowhere else (the
+# web app), and the EDOT Collector the gateway already runs (about 1 GB: no pull from the Internet on every node).
+# Re-runs when the image changes in Docker.
 locals {
-  local_images = ["chaos2cure/web:3"]
+  local_images = {
+    "chaos2cure/web:3"                       = keys(local.workers) # the web app runs on workload nodes only
+    (local.intent.telemetry.collector_image) = keys(local.nodes)   # observability.tf: a collector on every node
+  }
+  image_loads = merge([
+    for image, nodes in local.local_images : {
+      for node in nodes : "${node}/${image}" => {
+        node  = node
+        image = image
+      }
+    }
+  ]...)
 }
 
 data "external" "image_id" {
-  for_each = toset(local.local_images)
+  for_each = local.local_images
   program  = ["sh", "-c", "docker image inspect --format '{\"id\":\"{{.Id}}\"}' ${each.key}"]
 }
 
 resource "terraform_data" "image" {
-  for_each = {
-    for pair in setproduct(keys(local.workers), local.local_images) : "${pair[0]}/${pair[1]}" => {
-      node  = pair[0]
-      image = pair[1]
-    }
-  }
-  input = data.external.image_id[each.value.image].result.id
+  for_each = local.image_loads
+  input    = data.external.image_id[each.value.image].result.id
 
   # A node's containerd only exists once its k3s is up: on a fresh deploy the later nodes are still joining.
   depends_on = [terraform_data.pod_cidr]
