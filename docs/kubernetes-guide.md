@@ -58,12 +58,13 @@ All k3s arguments are generated, so look at `cmd` in `containerlab/netops.clab.y
 | File | Resources |
 |---|---|
 | `main.tf` | providers (kubernetes, helm, alekc/kubectl, external), reads `generated/kubernetes.yml`; local backend (path set by `automation/k8s`) |
-| `nodes.tf` | `terraform_data.pod_cidr`: waits for each node, sets `spec.podCIDR` once. `terraform_data.image`: copies lab-built images (`docker save` → `ctr import`) into each workload node |
+| `nodes.tf` | `terraform_data.pod_cidr`: waits for each node, sets `spec.podCIDR` once. `terraform_data.image`: copies images from the host's Docker (`docker save` → `ctr import`): the web app into each workload node, the EDOT Collector into every node |
 | `cilium.tf` | `helm_release.cilium`: native routing, `ipam.mode=kubernetes`, `ipv4NativeRoutingCIDR=10.0.0.0/8`, BGP control plane, kube-proxy kept, Hubble on (no relay) |
 | `bgp.tf` | one `CiliumBGPClusterConfig` per node (its AS, its switch as the peer), `CiliumBGPPeerConfig` `fabric` (3 s / 9 s timers, graceful restart), `CiliumBGPAdvertisement` (PodCIDR + LoadBalancerIP), two `CiliumLoadBalancerIPPool`s |
 | `apps.tf` | namespace `prod`, `web` Deployment + PDB + two LoadBalancer Services, `db` placeholder, `iperf3-*` per zone |
+| `observability.tf` | namespace `otel`: the EDOT Collector as `otel-agent` (DaemonSet, every node: kubelet stats, container logs, k8s metadata) and `otel-cluster` (Deployment, 1 replica: cluster state, events), read-only RBAC; OTLP to the lab gateway `172.20.20.250:4317` over each node's eth0. Data streams: [elastic.md § 5](elastic.md#5-data-streams) |
 
-Order on a fresh lab: pod CIDRs → Cilium (waits until ready) → BGP and pools → apps.
+Order on a fresh lab: pod CIDRs → Cilium (waits until ready) → BGP and pools → apps, and the collectors once their image is in every node.
 
 Run it:
 ```bash

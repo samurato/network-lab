@@ -81,6 +81,10 @@ The lab key's privileges are code (`elastic/terraform/security.tf`), but the key
 once: Elasticsearch doesn't let an API key create another API key with privileges, and on Serverless people
 sign in through Elastic Cloud, so Terraform has no user to create it as.
 
+When `security.tf` changes, update the existing key rather than making a new one: Kibana → API keys → `netops-lab`
+→ edit privileges, and paste the output of `automation/elastic role`. 2026-10-14 added read on `metrics-k8s.*.otel-*`
+(Kubernetes metrics, roadmap Step 11); until the key has it, `make verify` shows those two checks as WARN.
+
 ---
 
 ## 3. First-time setup
@@ -173,6 +177,10 @@ no OTLP endpoint in this project; the dataset is the only thing the collector ha
 | `metrics-gnmi.otel-default` | gnmic (14 cEOS switches) | 7 days | time series data stream (TSDS); template `metrics-gnmi.otel`. Counters are `counter_double`: use `TS … RATE()` or `TO_DOUBLE()` |
 | `logs-gnmi.state.otel-default` | gnmic's state output via the collector's `file_log` (14 cEOS switches) | 30 days | logsdb; template `logs-gnmi.state.otel`. One document per route / BGP / port / LLDP / VTEP / VNI / MAC change, `op` = `update` or `delete`; fields in [telemetry.md § State documents](telemetry.md#state-documents-logs-gnmistate) |
 | `metrics-otelcol.otel-default` | the collector's own metrics (scraped from `127.0.0.1:8888`; resource `service.name: elastic-otel-collector`) | 3 days | accepted / refused / sent / failed points, queue size |
+| `metrics-k8s.kubelet.otel-default` | in-cluster EDOT agent, `kubelet_stats` (every node, 30 s) | 7 days | TSDS. Node, pod and container CPU, memory, network, filesystem; `host.name` = node; pod, deployment, namespace attributes |
+| `metrics-k8s.cluster.otel-default` | in-cluster EDOT cluster collector, `k8s_cluster` (30 s) | 7 days | TSDS. Node conditions, desired vs available replicas, pod phases, container restarts |
+| `logs-k8s.events.otel-default` | in-cluster EDOT cluster collector, `k8s_events` | 30 days | one document per Kubernetes event: `k8s.event.reason`, `severity_text` (Normal / Warning), `k8s.object.kind` / `name`, `attributes.k8s.namespace.name`, message in `body.text`; `host.name` = the node, when the object is on one |
+| `logs-k8s.container.otel-default` | in-cluster EDOT agent, `file_log` on `/var/log/pods` | 7 days | every container's stdout / stderr (not the collectors' own), with pod, deployment, namespace, node |
 | `traces-generic.otel-default` | web pods | project default | `service.name: web` |
 | `metrics-generic.otel-default` | web pods (HTTP server duration, runtime) | project default | |
 | `logs-generic.otel-default` | web pods, when they send logs | project default | |

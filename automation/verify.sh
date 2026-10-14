@@ -16,6 +16,7 @@ EOS_USER=${EOS_USER:-admin}; EOS_PASSWORD=${EOS_PASSWORD:-admin}
 fail=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$*"; }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; fail=1; }
+warn() { printf '  \033[33mWARN\033[0m %s\n' "$*"; }   # worth a look, but does not fail the run
 SC=generated/intended/structured_configs
 mgmt() { yq -r ".topology.nodes.\"$1\".\"mgmt-ipv4\"" "$TOPO"; }
 eapi() {  # eapi <node> <cmd>... -> JSON result array
@@ -137,5 +138,22 @@ if [[ -n ${ELASTIC_ES_URL:-} && -n ${ELASTIC_API_KEY:-} ]]; then
     || bad "metrics-otelcol: no collector health metrics in the last 2 min"
   n=$(esql 'FROM traces-*.otel-* | WHERE @timestamp > NOW() - 5 minutes AND service.name == "web" | STATS n = COUNT(*)')
   [[ ${n:-0} -gt 0 ]] && ok "traces: $n web spans in the last 5 min" || bad "traces: no web spans in the last 5 min"
+  # Kubernetes, from the in-cluster EDOT collectors (kubernetes/terraform/observability.tf)
+  k8s_nodes=$(yq -r '[.topology.nodes | to_entries[] | select(.key | test("-k8s-"))] | length' "$TOPO")
+  IFS=, read -r docs nodes < <(esql 'FROM logs-k8s.container.otel-* | WHERE @timestamp > NOW() - 5 minutes
+    | STATS docs = COUNT(*), nodes = COUNT_DISTINCT(host.name)')
+  [[ ${docs:-0} -gt 0 ]] && ok "logs-k8s.container: $docs container log lines from ${nodes} node(s) in the last 5 min" \
+    || bad "logs-k8s.container: no container logs in the last 5 min (otel-agent DaemonSet, namespace otel)"
+  IFS=, read -r docs nodes < <(esql 'FROM metrics-k8s.kubelet.otel-* | WHERE @timestamp > NOW() - 2 minutes
+    | STATS docs = COUNT(*), nodes = COUNT_DISTINCT(host.name)')
+  [[ ${nodes:-0} -eq $k8s_nodes ]] && ok "metrics-k8s.kubelet: $docs docs from $nodes/$k8s_nodes nodes in the last 2 min" \
+    || warn "metrics-k8s.kubelet: ${nodes:-0}/$k8s_nodes nodes visible in the last 2 min (if 0: the lab key may lack read on metrics-k8s.*, docs/elastic.md § 2)"
+  n=$(esql 'FROM metrics-k8s.cluster.otel-* | WHERE @timestamp > NOW() - 2 minutes | STATS n = COUNT(*)')
+  [[ ${n:-0} -gt 0 ]] && ok "metrics-k8s.cluster: cluster state arriving ($n docs in 2 min)" \
+    || warn "metrics-k8s.cluster: no cluster state visible in the last 2 min (otel-cluster Deployment; or the lab key lacks read on metrics-k8s.*)"
+  # events only come when something happens: their stream existing at all is the check
+  n=$(esql 'FROM logs-k8s.events.otel-* | STATS n = COUNT(*)')
+  [[ ${n:-0} -gt 0 ]] && ok "logs-k8s.events: $n Kubernetes events in Elastic" \
+    || bad "logs-k8s.events: no Kubernetes events in Elastic (otel-cluster Deployment)"
 fi
 exit $fail

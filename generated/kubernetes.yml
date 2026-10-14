@@ -15,6 +15,9 @@ cluster:
     - 192.0.2.0/24
     - 198.51.100.0/24
     - 203.0.113.0/24
+telemetry:
+  collector_image: docker.elastic.co/elastic-agent/elastic-otel-collector:9.5.5
+  gateway_otlp_grpc: 172.20.20.250:4317
 nodes:
   dc1-k8s-cp1:
     role: server

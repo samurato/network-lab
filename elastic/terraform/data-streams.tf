@@ -12,11 +12,27 @@ locals {
       retention   = "3d"
       description = "the lab collector's own metrics: accepted, refused, queued, failed"
     }
+    "k8s.kubelet" = {
+      retention   = "7d"
+      description = "Kubernetes node, pod and container CPU, memory, network, filesystem (kubelet_stats, in-cluster EDOT agent)"
+    }
+    "k8s.cluster" = {
+      retention   = "7d"
+      description = "Kubernetes cluster state: node conditions, desired vs ready replicas, pod phases, restarts (k8s_cluster)"
+    }
   }
   logs_datasets = {
     "gnmi.state" = {
       retention   = "30d"
       description = "cEOS state changes from gnmic: routes (AFT), BGP, LLDP, oper-status, VTEPs, VNIs, MACs"
+    }
+    "k8s.events" = {
+      retention   = "30d"
+      description = "Kubernetes events: scheduling, pulls, probes, kills, evictions (k8s_events, in-cluster EDOT)"
+    }
+    "k8s.container" = {
+      retention   = "7d"
+      description = "Kubernetes container logs (file_log on /var/log/pods, with pod / deployment / node metadata)"
     }
   }
 }
