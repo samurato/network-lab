@@ -15,8 +15,7 @@ echo
 echo '<details><summary>Per-device diff</summary>'
 echo
 echo '```diff'
-# keep only diff lines (+/-) and the TASK/host headers around them; cap size for GitHub
-awk '/^TASK/{t=$0} /^--- system:|^--- before/{show=($0 ~ /system:/)} show && /^(changed: |[+-])/' "$log" \
-  | grep -vE '^(\+\+\+|---) ' | head -c 60000
+# cEOS and FRR diff lines (plan-diff.sh); cap size for GitHub
+"$(dirname "$0")/plan-diff.sh" "$log" | head -c 60000 || true
 echo '```'
 echo '</details>'
