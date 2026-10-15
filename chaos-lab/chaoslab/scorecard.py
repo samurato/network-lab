@@ -14,6 +14,7 @@ from chaoslab import config, elastic, state
 STATE_LOG = "logs-gnmi.state.otel-*"
 METRICS = "metrics-gnmi.otel-*"
 TRACES = "traces-*.otel-*"
+K8S_EVENTS = "logs-k8s.events.otel-*"
 WEB = 'service.name == "web" AND kind == "Server" AND NOT http.user_agent LIKE "kube-probe*"'
 
 
@@ -138,8 +139,22 @@ def new_web_pod(start, end):
     return min(new) if new else None
 
 
+def k8s_event(start, end, reason, namespace=None, object_prefix=None):
+    """A Kubernetes event with this reason (e.g. ErrImageNeverPull, BackOff, ScalingReplicaSet)."""
+    where, params = "k8s.event.reason == ?r", {"r": reason}
+    if namespace:
+        where += " AND attributes.k8s.namespace.name == ?n"
+        params["n"] = namespace
+    if object_prefix:
+        where += " AND k8s.object.name LIKE ?o"
+        params["o"] = object_prefix + "*"
+    return _first(f"FROM {K8S_EVENTS} | WHERE @timestamp >= ?s AND @timestamp <= ?e AND {where} "
+                  "| STATS t = MIN(@timestamp)", start, end, **params)
+
+
 DETECTORS = {f.__name__: f for f in (port_down, lldp_lost, bgp_down, route_change, routes_withdrawn, vni_change,
-                                     mtu, traffic_above, web_latency_up, web_requests_drop, web_errors, new_web_pod)}
+                                     mtu, traffic_above, web_latency_up, web_requests_drop, web_errors, new_web_pod,
+                                     k8s_event)}
 
 
 def score(run: dict, detect: list) -> dict:

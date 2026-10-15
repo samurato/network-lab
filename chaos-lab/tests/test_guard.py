@@ -2,7 +2,7 @@
 Run: make test (no lab changes)."""
 import sys
 
-from chaoslab import guard
+from chaoslab import eos, guard, k8s
 
 REFUSED = [
     ("node otelcol", lambda: guard.check_node("otelcol")),
@@ -30,6 +30,15 @@ ALLOWED = [
     ("hijack prefix", lambda: guard.check_prefix("ip route 192.0.2.10/32 203.0.113.66")),
     ("k8s target", lambda: guard.check_target("k8s:prod/web")),
     ("frr node", lambda: guard.check_node("wan1")),
+    ("bgw wan bgp shut", lambda: guard.check_eos_commands("dc1-bgw1", [
+        "router bgp 65100", "neighbor WAN-PEERS shutdown", "vrf PROD", "neighbor 10.255.10.1 shutdown"])),
+    ("k8s scratch ns", lambda: guard.check_namespace(k8s.SCRATCH_NS)),
+]
+
+# Names that show up in telemetry (switch config, Kubernetes) must not say chaos: the agent is tested blind.
+NEUTRAL = [
+    ("eos snapshot prefix", eos.SNAPSHOT_PREFIX),
+    ("k8s scratch namespace", k8s.SCRATCH_NS),
 ]
 
 
@@ -49,6 +58,12 @@ def main() -> None:
         except guard.Refused as e:
             print(f"FAIL  {name}: refused ({e})")
             bad += 1
+    for name, value in NEUTRAL:
+        if "chaos" in value.lower():
+            print(f"FAIL  {name}: '{value}' gives the test away")
+            bad += 1
+        else:
+            print(f"ok    {name}: neutral ({value})")
     sys.exit(1 if bad else 0)
 
 

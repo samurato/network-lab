@@ -1,0 +1,114 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=k8s-06   Dry run: make dry EXP=k8s-06
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'Total outage: a bad deploy, the web image does not exist and every web pod is gone'
+description: |
+  A deploy sets the web Deployment (prod/web) to image chaos2cure/web:4, a tag that was never imported on the nodes (imagePullPolicy Never), with the Recreate strategy. Every running web pod is stopped first, and every new one sticks in ErrImageNeverPull. With externalTrafficPolicy Local no node has a ready web endpoint, so Cilium withdraws the public and internal VIPs everywhere: every Internet user loses the website. The network, BGP sessions and nodes stay healthy. Rollback patches back the exact previous image and strategy (the old ReplicaSet scales up again) and waits for `kubectl rollout status`.
+tags:
+- chaos-lab
+- kubernetes
+- bad-deploy
+- outage
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: k8s-06
+  layer: kubernetes
+  fault: bad-deploy
+  random: false
+  blast_radius: 1
+  extra_seconds: 60
+  targets:
+  - k8s:prod/web
+  expected:
+  - 'Internet users: the website times out (no route to 192.0.2.10), 100% of requests fail'
+  - 'Kubernetes events: ScalingReplicaSet (old ReplicaSet to 0, a new one up), then ErrImageNeverPull on every new web pod'
+  - web deployment 0 ready of 4, a new ReplicaSet with image chaos2cure/web:4
+  - web traces stop completely; container logs of web stop
+  - 192.0.2.10/32 and 10.99.0.10/32 withdrawn by every k8s node (BGP prefixes received on the leaves drop, BMP on the WAN)
+  - 'BGP sessions, nodes and the fabric stay healthy: an application fault, not a network fault'
+  detect:
+  - signal: web_requests_drop
+    label: web requests drop everywhere
+  - signal: k8s_event
+    label: 'Kubernetes event: web pods cannot get their image (ErrImageNeverPull)'
+    reason: ErrImageNeverPull
+    namespace: prod
+    object_prefix: web-
+  - signal: k8s_event
+    label: 'Kubernetes event: web ReplicaSets scaled (the deploy)'
+    reason: ScalingReplicaSet
+    namespace: prod
+    object_prefix: web
+  - signal: route_change
+    label: public VIP 192.0.2.10/32 withdrawn on dc1-bgw1
+    prefix: 192.0.2.10/32
+    device: dc1-bgw1
+  - signal: new_web_pod
+    label: new web pods appear in the traces (after the rollback)
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: deploy-bad-web-image
+  provider:
+    type: python
+    module: chaoslab.k8s
+    func: set_image
+    arguments:
+      namespace: prod
+      deployment: web
+      container: web
+      image: chaos2cure/web:4
+      strategy: Recreate
+  pauses:
+    after: 30
+- type: probe
+  name: evidence-web-pods
+  provider:
+    type: python
+    module: chaoslab.k8s
+    func: show
+    arguments:
+      namespace: prod
+      what: pods
+      selector: app=web
+- type: probe
+  name: evidence-internet-user
+  provider:
+    type: python
+    module: chaoslab.probes
+    func: http_body
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

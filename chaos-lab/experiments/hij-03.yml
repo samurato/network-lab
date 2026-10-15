@@ -61,7 +61,7 @@ method:
     arguments:
       node: wan1
       lines:
-      - route-map CHAOS-FORGE-ORIGIN permit 10
+      - route-map RM-CUST-ORIGIN permit 10
       - set as-path prepend 64902
       - exit
       - vrf PROD
@@ -69,7 +69,7 @@ method:
       - exit-vrf
       - router bgp 64901 vrf PROD
       - address-family ipv4 unicast
-      - network 198.51.100.11/32 route-map CHAOS-FORGE-ORIGIN
+      - network 198.51.100.11/32 route-map RM-CUST-ORIGIN
       undo:
       - router bgp 64901 vrf PROD
       - address-family ipv4 unicast
@@ -79,7 +79,7 @@ method:
       - vrf PROD
       - no ip route 198.51.100.11/32 203.0.113.66
       - exit-vrf
-      - no route-map CHAOS-FORGE-ORIGIN permit 10
+      - no route-map RM-CUST-ORIGIN permit 10
   pauses:
     after: 15
 - type: probe

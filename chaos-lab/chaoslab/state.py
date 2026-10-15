@@ -117,6 +117,9 @@ def run_inverse(inverse: dict) -> None:
         eos.restore(inverse["node"], inverse["file"])
     elif kind == "cmd":
         config.sh(inverse["argv"], timeout=inverse.get("timeout", 120))
+    elif kind == "cmds":                 # several commands, in order (e.g. restore a deployment, wait for it)
+        for argv in inverse["argvs"]:
+            config.sh(argv, timeout=inverse.get("timeout", 120))
     elif kind == "note":                 # self-healing fault (pod delete): nothing to undo
         pass
     else:

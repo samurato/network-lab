@@ -105,8 +105,9 @@ The lab key can write `logs-chaos.*` but not read it, so an agent with that key 
 | net-07 | | VXLAN VNI mismatch | eAPI: VLAN 110 → VNI 19110 on dc1-leaf2 |
 | net-08 | yes | DCI congestion | iperf3 DC1 → DC2 pods, 4 × 100 Mbit/s |
 | net-09 | | Spine isolated, interfaces still up | netem 100% loss on all of dc1-spine2's fabric links |
-| net-10 | | DNS outage (the network is fine) | CoreDNS scaled to 0 |
+| net-10 | | DNS outage (the network is fine) | CoreDNS scaled to 0; after 60 s one web pod is deleted, and its replacement can't resolve Redis |
 | net-11 | | **Total outage:** public VIPs withdrawn in both DCs, so every Internet user loses the website (nothing is "down") | eAPI: `no seq 30` in PL-K8S-IN on dc1-leaf1/3/4 and dc2-leaf1/2 |
+| net-12 | | **Total outage:** both DCs cut off from the WAN (and from each other: the DCI underlay rides the WAN) | eAPI: `neighbor WAN-PEERS shutdown` (default VRF) and the wan1/wan2 neighbours in VRF PROD shut on dc1-bgw1/2 and dc2-bgw1/2 |
 
 ### WAN route hijacks
 
@@ -124,7 +125,19 @@ The lab key can write `logs-chaos.*` but not read it, so an agent with that key 
 | k8s-02 | | Web capacity lost in DC1 | Cordon the DC1 nodes and delete the DC1 web pods (replacements stay Pending) |
 | k8s-03 | yes | Node cut off from the fabric | netem 100% loss on dc1-k8s-wk2 eth1 (management untouched) |
 | k8s-04 | yes | Cilium agent restart: the node's BGP session to its leaf resets | Delete the Cilium pod on dc1-k8s-wk1 |
-| k8s-05 | | Noisy neighbour | A throwaway CPU and memory stress pod on dc1-k8s-wk1 |
+| k8s-05 | | Noisy neighbour | A throwaway CPU and memory stress pod (`batch-jobs/report-worker`) on dc1-k8s-wk1 |
+| k8s-06 | | **Total outage:** bad deploy, every web pod gone | `kubectl patch` prod/web to image `chaos2cure/web:4` (never imported, pull policy Never) with strategy Recreate: old pods stop, new ones stick in ErrImageNeverPull, the VIPs are withdrawn |
+
+**The outage cases** (net-11, net-12, k8s-06) are never random. Each breaks the website for every user in a different layer: route policy, BGP sessions, the app. The rollback:
+- net-11 and net-12: `configure replace` from each switch's snapshot.
+- k8s-06: patches back the exact image and rollout strategy it recorded before the change (the old ReplicaSet scales up again), then waits for `kubectl rollout status`.
+
+**No giveaways in telemetry.** The agent is tested blind, so nothing a fault leaves in the lab says "chaos":
+- switch snapshots are `flash:cfg-backup-<UTC timestamp>.cfg`, without the experiment id;
+- k8s-05's pod is `batch-jobs/report-worker`;
+- net-06's OSPF key and hij-03's route-map (`RM-CUST-ORIGIN`) have ordinary names.
+
+`make test` checks the snapshot prefix and the namespace.
 
 Each experiment's `extensions.expected` lists the symptoms the telemetry should show, which is the basis for scoring an agent.
 
@@ -143,10 +156,10 @@ Each experiment's `extensions.expected` lists the symptoms the telemetry should 
 - **Blast radius.** Each experiment declares how many faults it may make, and anything beyond that is refused.
 - **Lab lock.** A run is refused while a netops deploy holds `~/clab-runs/.netops.lock`. The lock is taken for inject and rollback only, not during the hold, so drift detection still sees the fault.
 - **Undo first.** Every fault registers its undo *before* it is made:
-  - switches: a config snapshot to flash, restored with `configure replace`;
+  - switches: a config snapshot to flash (`flash:cfg-backup-<timestamp>.cfg`), restored with `configure replace` and then deleted;
   - WAN routers: exact undo lines;
   - netem: reset;
-  - Kubernetes: uncordon, scale back, or delete the `chaos` namespace.
+  - Kubernetes: uncordon, scale back, put back the previous image and strategy (then `rollout status`), or delete the throwaway `batch-jobs` namespace.
 - **Rollback always runs** (`--rollback-strategy always`), and the end-of-run control rolls back again as a safety net.
 - **Watchdog.** A detached process rolls the run back at hold + 180 s if it is still active, so killing the runner never leaves a fault behind. `make stop` undoes everything immediately.
 - **Recovery check.** After rollback, the health checks must pass within 300 s, or the run is recorded as not recovered. Fixing the lab after that (`make verify`, then `make redeploy` in netops-lab) is a human decision.
