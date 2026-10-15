@@ -235,6 +235,12 @@ RFC 3164 senders.
 
 ## Phase P3 – Flows
 
+- [x] (2026-10-15) `drift.yml` records every run in `logs-netops.drift-default` (`automation/drift-event.sh`):
+  outcome `in_sync` / `drift` / `plan_failed`, the drifted devices and their diff, so the agent can tell drift
+  from Elastic alone. Also fixed: `plan-report.sh` died (pipefail on an empty `grep -v`) whenever only FRR
+  routers had changed, so a drift on `wan1` was detected but never reported; FRR diffs are now included
+  (`automation/plan-diff.sh`), and the missing `drift` label is created on first use.
+
 ### Step 10 – sFlow → goflow2 → Elastic
 - [ ] Sources: cEOS sFlow (Step 5's test showed samples). Move the sFlow config from dc1-leaf1 to the fabric
   (`sflow_settings` + `fabric_sflow`), pointed at goflow2. Host-side sampling (`hsflowd` / `pmacctd` on the veth

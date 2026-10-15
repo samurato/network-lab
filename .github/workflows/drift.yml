@@ -16,10 +16,16 @@ jobs:
     env:
       EOS_USER: ${{ secrets.EOS_USER }}
       EOS_PASSWORD: ${{ secrets.EOS_PASSWORD }}
+      ELASTIC_ES_URL: ${{ secrets.ELASTIC_ES_URL }}
+      ELASTIC_API_KEY: ${{ secrets.ELASTIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Plan against main
+        id: plan
         run: set -o pipefail; make plan 2>&1 | tee plan.log
+      - name: Record the drift result in Elastic (every run, in sync or not)
+        if: always()
+        run: automation/drift-event.sh "${{ steps.plan.outcome }}" plan.log
       - name: Open / update drift issue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -28,7 +34,8 @@ jobs:
           if ! grep -q '^No device changes' <<<"$body"; then
             n=$(gh issue list --label drift --state open --json number -q '.[0].number')
             if [ -n "$n" ]; then gh issue comment "$n" --body "$body"
-            else gh issue create --label drift --title "Drift: running network differs from main" --body "$body"; fi
+            else gh label create drift --color B60205 --description "running network differs from main" 2>/dev/null || true
+                 gh issue create --label drift --title "Drift: running network differs from main" --body "$body"; fi
             exit 1
           fi
           echo "no drift"
