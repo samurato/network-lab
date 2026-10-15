@@ -5,6 +5,11 @@ CLI    := PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.cli
 TRAFFIC := PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.traffic
 PROFILE ?=
 
+# PUBLISH=0 keeps everything local: no runs, events or catalogue to Elastic (the scorecard still reads it)
+ifdef PUBLISH
+export CHAOSLAB_PUBLISH := $(PUBLISH)
+endif
+
 .PHONY: help venv list validate test dry dry-all run random stop status traffic-start traffic-dry traffic-stop traffic-status score publish
 
 help:            ## list targets
@@ -23,6 +28,7 @@ validate:        ## Chaos Toolkit schema validation of every experiment
 
 test:            ## guard self-test (telemetry and management must be refused); changes nothing
 	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) tests/test_guard.py
+	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) tests/test_publish.py
 
 dry:             ## dry run EXP=<id>: guard + steady-state probes only, nothing injected
 	@$(CLI) run $(EXP) --dry
@@ -30,7 +36,7 @@ dry:             ## dry run EXP=<id>: guard + steady-state probes only, nothing 
 dry-all:         ## dry run every experiment
 	@for f in experiments/*.yml; do id=$$(basename $$f .yml); $(CLI) run $$id --dry || exit 1; done
 
-run:             ## RUN EXP=<id> (injects the fault; hold: CHAOSLAB_HOLD, default 300 s)
+run:             ## RUN EXP=<id> (injects the fault; hold: CHAOSLAB_HOLD, default 300 s; PUBLISH=0: nothing to Elastic)
 	@$(CLI) run $(EXP)
 
 random:          ## Chaos Monkey mode: run one random experiment marked random
