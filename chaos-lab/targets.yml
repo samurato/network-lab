@@ -64,6 +64,7 @@ linux:
 # and reads telemetry for the detection scorecard. Steady state never uses Elastic.
 elastic:
   env_file: ../automation/elastic.env     # git-ignored; environment variables win
+  publish: true                           # false: nothing goes to logs-chaos.* (per run: make run ... PUBLISH=0)
   secrets_dir: ~/clab-runs/netops-bundle/telemetry/otelcol/secrets
 
 probes:

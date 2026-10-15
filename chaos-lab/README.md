@@ -32,6 +32,8 @@ make list                       # the catalogue
 make dry EXP=net-01             # guard + health checks only, nothing injected
 make run EXP=net-01             # inject, hold 5 min, roll back, check recovery
 CHAOSLAB_HOLD=600 make run EXP=hij-01    # a longer fault window
+make run EXP=net-11 PUBLISH=0    # nothing goes to Elastic for this run, now or later
+CHAOSLAB_HOLD=180 make monkey COUNT=5 GAP=120 PUBLISH=0    # Chaos Monkey campaign: 5 random faults in a row
 make random                     # Chaos Monkey mode: one random experiment marked "random"
 make status                     # current run, active faults, recent runs
 make stop                       # kill switch: undo every active fault now
@@ -77,11 +79,15 @@ The dashboards are Terraform in `elastic/terraform/` (`dashboards-chaos.tf`, `da
 
 **Publishing** uses the lab key, `ELASTIC_ES_URL` and `ELASTIC_API_KEY` from the git-ignored `automation/elastic.env`, so there's nothing to set up. Every run publishes as it goes. `make publish` sends the catalogue and any earlier runs.
 
+**Publishing off.** `PUBLISH=0` on any make target (`make run EXP=net-11 PUBLISH=0`, `make traffic-start PUBLISH=0`), or `elastic.publish: false` in `targets.yml` for every run, sends nothing to Elastic: no run, timeline, scorecard or catalogue documents. The run is still recorded in `runs.jsonl`, marked `"publish": false`, so the watchdog's rollback, a re-score or a later `make publish` never send it either. The scorecard still runs: it only reads telemetry from Elastic.
+
 The lab key can write `logs-chaos.*` but not read it, so an agent with that key can't see the answers. Keep it that way: don't widen the lab key's read privileges to `logs-*` (`elastic/terraform/security.tf`).
 
 | Command | Does |
 |---|---|
 | `make score [RUN=<run_id>]` | Recompute a run's scorecard (default: the last run) |
+| `make monkey` | Chaos Monkey campaign: `COUNT` (5) random experiments one after another, about `GAP` (120) s apart. Each waits for the lab to be idle (no run, no active fault, no deploy or drift check), never repeats the previous pick, and the campaign stops at the first run that does not recover. Stop it early with Ctrl-C (Chaos Toolkit rolls the current fault back), then `make stop` |
+| `make monkey-dry` | The same campaign with dry runs only |
 | `make publish` | Send the catalogue and every recorded run to Elastic again (safe to repeat) |
 
 ## Catalogue
@@ -100,6 +106,7 @@ The lab key can write `logs-chaos.*` but not read it, so an agent with that key 
 | net-08 | yes | DCI congestion | iperf3 DC1 → DC2 pods, 4 × 100 Mbit/s |
 | net-09 | | Spine isolated, interfaces still up | netem 100% loss on all of dc1-spine2's fabric links |
 | net-10 | | DNS outage (the network is fine) | CoreDNS scaled to 0 |
+| net-11 | | **Total outage:** public VIPs withdrawn in both DCs, so every Internet user loses the website (nothing is "down") | eAPI: `no seq 30` in PL-K8S-IN on dc1-leaf1/3/4 and dc2-leaf1/2 |
 
 ### WAN route hijacks
 

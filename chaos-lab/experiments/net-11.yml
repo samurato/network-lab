@@ -1,0 +1,154 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=net-11   Dry run: make dry EXP=net-11
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'Total outage: a bad route policy on every Kubernetes leaf withdraws the public VIPs in both DCs'
+description: |
+  One policy change, pushed everywhere: PL-K8S-IN loses its public VIP entry (seq 30, 192.0.2.0/24 ge 32) on every leaf that peers with Kubernetes, in DC1 and DC2. Neither DC announces 192.0.2.10/32 any more, so the WAN has no route to the website and every Internet user is down. BGP sessions, the fabric and the pods all stay up, and internal VIPs (10.99.0.0/24) keep working: a control-plane outage with nothing "down", like the 2021 Facebook withdrawal.
+tags:
+- chaos-lab
+- network
+- route-policy
+- outage
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: net-11
+  layer: network
+  fault: route-policy
+  random: false
+  blast_radius: 5
+  extra_seconds: 0
+  targets:
+  - dc1-leaf1
+  - dc1-leaf3
+  - dc1-leaf4
+  - dc2-leaf1
+  - dc2-leaf2
+  expected:
+  - 'Internet users: the website times out (no route to 192.0.2.10), 100% of requests fail'
+  - BGP prefixes received from every k8s node drop by the VIP /32s (net.bgp.prefixes.received / installed)
+  - 192.0.2.10/32 withdrawn on the BGWs of both DCs and on the WAN routers (BMP)
+  - web traces stop completely; pods, nodes and BGP sessions stay healthy
+  - 'BGP sessions stay established: a policy fault, not a session fault'
+  detect:
+  - signal: web_requests_drop
+    label: web requests drop everywhere
+  - signal: route_change
+    label: public VIP 192.0.2.10/32 withdrawn on dc1-bgw1
+    prefix: 192.0.2.10/32
+    device: dc1-bgw1
+  - signal: route_change
+    label: public VIP 192.0.2.10/32 withdrawn on dc2-bgw1
+    prefix: 192.0.2.10/32
+    device: dc2-bgw1
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: drop-vip-from-policy-dc1-leaf1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-leaf1
+      commands:
+      - ip prefix-list PL-K8S-IN
+      - no seq 30
+- type: action
+  name: drop-vip-from-policy-dc1-leaf3
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-leaf3
+      commands:
+      - ip prefix-list PL-K8S-IN
+      - no seq 30
+- type: action
+  name: drop-vip-from-policy-dc1-leaf4
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-leaf4
+      commands:
+      - ip prefix-list PL-K8S-IN
+      - no seq 30
+- type: action
+  name: drop-vip-from-policy-dc2-leaf1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc2-leaf1
+      commands:
+      - ip prefix-list PL-K8S-IN
+      - no seq 30
+- type: action
+  name: drop-vip-from-policy-dc2-leaf2
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc2-leaf2
+      commands:
+      - ip prefix-list PL-K8S-IN
+      - no seq 30
+  pauses:
+    after: 15
+- type: probe
+  name: evidence-dc1-bgw1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: show
+    arguments:
+      node: dc1-bgw1
+      command: show ip route vrf PROD 192.0.2.10
+- type: probe
+  name: evidence-wan2
+  provider:
+    type: python
+    module: chaoslab.frr
+    func: show
+    arguments:
+      node: wan2
+      command: show ip bgp vrf PROD 192.0.2.10/32
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

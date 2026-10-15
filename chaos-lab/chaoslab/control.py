@@ -36,7 +36,8 @@ def before_experiment_control(context: dict, **kwargs) -> None:
     publish.catalogue()
     publish.run(run)
     publish.event("run.start", run, targets=run["targets"], message=run["title"])
-    log.info(f"chaoslab: run {run['run_id']} started; watchdog rolls back after {deadline}s if still active")
+    log.info(f"chaoslab: run {run['run_id']} started; watchdog rolls back after {deadline}s if still active"
+             f"{'' if run['publish'] else '; publishing to Elastic is off (local only)'}")
 
 
 def after_experiment_control(context: dict, state: dict = None, **kwargs) -> None:

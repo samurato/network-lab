@@ -8,11 +8,16 @@ lab key. Append-only data streams; the dashboard takes the latest document per r
 
 The local runs.jsonl stays the source of truth: publishing never blocks or fails a run, and
 `python -m chaoslab.publish` (make publish) re-sends the catalogue and every recorded run.
+
+Publishing off (make run EXP=... PUBLISH=0, or elastic.publish: false in targets.yml): nothing is sent.
+A run started that way is kept local for good: it is marked "publish": false, so a later rollback by the
+watchdog, a re-score or `make publish` never sends it either.
 """
 import datetime
 import logging
+import os
 
-from chaoslab import elastic, state
+from chaoslab import config, elastic, state
 
 log = logging.getLogger("chaostoolkit")
 _warned = False
@@ -22,8 +27,21 @@ SIGNALS = "logs-chaos.signals-default"
 EXPERIMENTS = "logs-chaos.experiments-default"
 
 
-def _send(actions: list) -> None:
+def enabled() -> bool:
+    """CHAOSLAB_PUBLISH (set by make's PUBLISH=0/1) wins over elastic.publish in targets.yml (default on)."""
+    env = os.environ.get("CHAOSLAB_PUBLISH", "")
+    if env:
+        return env.lower() not in ("0", "no", "false", "off")
+    return bool(config.targets()["elastic"].get("publish", True))
+
+
+def _send(actions: list, run: dict | None = None) -> None:
     global _warned
+    if not enabled() or (run and run.get("publish") is False):
+        if not _warned:
+            log.info("chaoslab: publishing to Elastic is off, this run stays local (runs.jsonl)")
+            _warned = True
+        return
     if not elastic.can_write():
         if not _warned:
             log.info("chaoslab: no Elastic URL / API key, not publishing to Elastic")
@@ -53,7 +71,7 @@ def _run_fields(run: dict) -> dict:
 
 def event(action: str, run: dict | None = None, **fields) -> None:
     doc = {"@timestamp": state.now(), "event": {"action": action}, **(_run_fields(run) if run else {}), **fields}
-    _send([({"create": {"_index": EVENTS}}, doc)])
+    _send([({"create": {"_index": EVENTS}}, doc)], run)
 
 
 def run_doc(run: dict, batch: str) -> dict:
@@ -103,7 +121,7 @@ def signal_docs(run: dict, batch: str) -> list:
 def run(run: dict) -> None:
     """Append a snapshot of the run, and its scorecard rows."""
     batch = _batch_time()
-    _send([({"create": {"_index": RUNS}}, run_doc(run, batch))] + signal_docs(run, batch))
+    _send([({"create": {"_index": RUNS}}, run_doc(run, batch))] + signal_docs(run, batch), run)
 
 
 def catalogue() -> None:
@@ -125,17 +143,22 @@ def catalogue() -> None:
 
 
 def main() -> None:
+    if not enabled():
+        raise SystemExit("publishing to Elastic is off (PUBLISH=0 or elastic.publish: false in targets.yml)")
     if not elastic.can_write():
         raise SystemExit("no Elastic URL / API key (ELASTIC_ES_URL, ELASTIC_API_KEY in automation/elastic.env)")
     catalogue()
-    runs = state.history(100000)
+    everything = state.history(100000)
+    runs = [r for r in everything if r.get("publish") is not False]
     for r in runs:
         run(r)
     cur = state.current()
     if cur:
         run(cur)
     event("catalogue.published", message=f"{len(runs)} run(s) re-sent")
-    print(f"published the catalogue and {len(runs)} run(s){' + the run in progress' if cur else ''} to Elastic")
+    local = len(everything) - len(runs)
+    print(f"published the catalogue and {len(runs)} run(s){' + the run in progress' if cur and cur.get('publish') is not False else ''}"
+          f" to Elastic{f'; {local} local-only run(s) not sent' if local else ''}")
 
 
 if __name__ == "__main__":

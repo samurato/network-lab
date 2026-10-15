@@ -3,6 +3,9 @@
   python -m chaoslab.cli list
   python -m chaoslab.cli run <id> [--dry]
   python -m chaoslab.cli random [--dry]      Chaos Monkey mode: one random experiment marked `random: true`
+  python -m chaoslab.cli monkey <count> <gap> [--dry]
+                                             Chaos Monkey campaign: <count> random experiments one after another,
+                                             <gap> seconds (+-50%) between them; stops at the first that fails to recover
   python -m chaoslab.cli stop                undo every active fault now
   python -m chaoslab.cli status
 """
@@ -10,11 +13,13 @@ import datetime
 import json
 import os
 import random
+import subprocess
 import sys
+import time
 
 import yaml
 
-from chaoslab import config, state, watchdog
+from chaoslab import config, guard, state, watchdog
 from chaoslab.control import extension
 
 
@@ -33,7 +38,8 @@ def cmd_list() -> None:
         print(f"{eid:8} {'yes' if ext.get('random') else '':6} {ext.get('blast_radius', 1):<5}  {exp['title']}")
 
 
-def cmd_run(eid: str, dry: bool) -> None:
+def _chaos(eid: str, dry: bool) -> tuple:
+    """The `chaos run` command line and environment for one experiment."""
     exps = experiments()
     if eid not in exps:
         sys.exit(f"unknown experiment {eid}; `make list`")
@@ -53,14 +59,56 @@ def cmd_run(eid: str, dry: bool) -> None:
         env["CHAOSLAB_DRY"] = "1"
     argv.append(str(path))
     print(f"chaos-lab: {'dry run' if dry else 'RUN'} {eid}: {exps[eid][1]['title']}", flush=True)
+    return argv, env
+
+
+def cmd_run(eid: str, dry: bool) -> None:
+    argv, env = _chaos(eid, dry)
     os.execve(argv[0], argv, env)
 
 
+def _eligible() -> list:
+    return [eid for eid, (_, _, ext) in experiments().items() if ext.get("random")]
+
+
 def cmd_random(dry: bool) -> None:
-    eligible = [eid for eid, (_, _, ext) in experiments().items() if ext.get("random")]
+    eligible = _eligible()
     eid = random.choice(eligible)
     print(f"chaos-lab: random pick from {len(eligible)} eligible experiments", flush=True)
     cmd_run(eid, dry)
+
+
+def _wait_for_lab(limit: int = 600) -> None:
+    """Start only when no run is active and no deploy or drift check holds the lab lock."""
+    deadline = time.time() + limit
+    while state.current() or state.active() or not guard.lab_lock_free():
+        if time.time() > deadline:
+            sys.exit("chaos-lab monkey: the lab stayed busy (a run, an active fault or the lab lock); stopping")
+        time.sleep(10)
+
+
+def cmd_monkey(count: int, gap: int, dry: bool) -> None:
+    eligible, last, done = _eligible(), None, []
+    print(f"chaos-lab monkey: {count} random experiments from {len(eligible)} eligible, ~{gap}s apart", flush=True)
+    for n in range(1, count + 1):
+        _wait_for_lab()
+        eid = random.choice([e for e in eligible if e != last] or eligible)   # never the same twice in a row
+        print(f"\nchaos-lab monkey: {n}/{count}", flush=True)
+        argv, env = _chaos(eid, dry)
+        subprocess.run(argv, env=env)       # deviated exits non-zero: that is a finding, not a monkey failure
+        last = eid
+        if not dry:
+            r = (state.history(1) or [{}])[-1]
+            done.append(f"{r.get('run_id', eid):34} {r.get('status', '?'):10} recovered={r.get('recovered')}"
+                        f" in {r.get('recovery_seconds')}s")
+            if r.get("recovered") is False or r.get("still_active") or state.active():
+                print("chaos-lab monkey: the lab did not recover; stopping (`make status`, `make stop`)", flush=True)
+                break
+        if n < count:
+            pause = int(gap * random.uniform(0.5, 1.5))
+            print(f"chaos-lab monkey: next fault in {pause}s", flush=True)
+            time.sleep(pause)
+    print("\nchaos-lab monkey: done", *done, sep="\n  ")
 
 
 def cmd_stop() -> None:
@@ -98,6 +146,8 @@ def main() -> None:
         cmd_run(args[1], dry)
     elif args[0] == "random":
         cmd_random(dry)
+    elif args[0] == "monkey" and len(args) == 3:
+        cmd_monkey(int(args[1]), int(args[2]), dry)
     elif args[0] == "stop":
         cmd_stop()
     elif args[0] == "status":

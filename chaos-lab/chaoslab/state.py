@@ -78,6 +78,8 @@ def start_run(ext: dict, title: str) -> dict:
         "started": now(),
         "injected": [],
     }
+    from chaoslab import publish
+    run["publish"] = publish.enabled()    # false: this run never goes to Elastic, whoever touches it later
     with _locked():
         _write("current.json", run)
     return run
