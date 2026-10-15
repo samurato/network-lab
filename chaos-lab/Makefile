@@ -21,8 +21,9 @@ validate:        ## Chaos Toolkit schema validation of every experiment
 	@for f in experiments/*.yml; do PYTHONPATH=$(CURDIR) $(VENV)/bin/chaos --no-log-file validate $$f >/dev/null 2>&1 \
 	  && echo "ok    $$f" || { echo "FAIL  $$f"; exit 1; }; done
 
-test:            ## guard self-test (telemetry and management must be refused); changes nothing
+test:            ## self-tests: guard (telemetry and management refused), vtysh error check; changes nothing
 	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) tests/test_guard.py
+	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) tests/test_frr.py
 
 dry:             ## dry run EXP=<id>: guard + steady-state probes only, nothing injected
 	@$(CLI) run $(EXP) --dry
