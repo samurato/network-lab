@@ -33,6 +33,7 @@ make dry EXP=net-01             # guard + health checks only, nothing injected
 make run EXP=net-01             # inject, hold 5 min, roll back, check recovery
 CHAOSLAB_HOLD=600 make run EXP=hij-01    # a longer fault window
 make run EXP=net-11 PUBLISH=0    # nothing goes to Elastic for this run, now or later
+CHAOSLAB_HOLD=180 make monkey COUNT=5 GAP=120 PUBLISH=0    # Chaos Monkey campaign: 5 random faults in a row
 make random                     # Chaos Monkey mode: one random experiment marked "random"
 make status                     # current run, active faults, recent runs
 make stop                       # kill switch: undo every active fault now
@@ -85,6 +86,8 @@ The lab key can write `logs-chaos.*` but not read it, so an agent with that key 
 | Command | Does |
 |---|---|
 | `make score [RUN=<run_id>]` | Recompute a run's scorecard (default: the last run) |
+| `make monkey` | Chaos Monkey campaign: `COUNT` (5) random experiments one after another, about `GAP` (120) s apart. Each waits for the lab to be idle (no run, no active fault, no deploy or drift check), never repeats the previous pick, and the campaign stops at the first run that does not recover. Stop it early with Ctrl-C (Chaos Toolkit rolls the current fault back), then `make stop` |
+| `make monkey-dry` | The same campaign with dry runs only |
 | `make publish` | Send the catalogue and every recorded run to Elastic again (safe to repeat) |
 
 ## Catalogue
