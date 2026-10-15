@@ -25,7 +25,7 @@ extensions:
   targets:
   - dc1-k8s-wk1
   expected:
-  - a pod in namespace chaos on dc1-k8s-wk1
+  - a pod batch-jobs/report-worker on dc1-k8s-wk1 (a CPU and memory hog)
   - web latency from dc1-k8s-wk1 pods may rise
   - no network symptom
   detect:

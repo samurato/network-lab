@@ -2,9 +2,9 @@
 # The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
 # and records the ground truth locally. Catalogue and safety rules: README.md.
 version: 1.0.0
-title: 'DNS outage: CoreDNS scaled to zero'
+title: 'DNS outage: CoreDNS scaled to zero, and a web pod restarted during it'
 description: |
-  Cluster DNS disappears. The network is healthy; anything that resolves names in the cluster fails. A test of whether the diagnosis wrongly blames the network.
+  Cluster DNS disappears. The network is healthy; anything that resolves names in the cluster fails. Running web pods keep their Redis connection, so a minute in one web pod is deleted (as any reschedule would): its replacement must resolve redis.prod and cannot, so it fails visibly. A test of whether the diagnosis wrongly blames the network. Rollback scales CoreDNS back to the replicas it had; the new web pod then resolves Redis and recovers.
 tags:
 - chaos-lab
 - kubernetes
@@ -20,17 +20,26 @@ extensions:
   layer: kubernetes
   fault: dns
   random: false
-  blast_radius: 1
-  extra_seconds: 0
+  blast_radius: 2
+  extra_seconds: 60
   targets:
   - k8s:kube-system/coredns
+  - k8s:prod/web
   expected:
   - 'Kubernetes: coredns deployment 0/0, scaling event'
-  - in-cluster lookups (iperf3-dc2, db.prod) fail; external VIP traffic unaffected
+  - 'after ~60 s: one web pod deleted and recreated; the new pod cannot resolve redis.prod (errors, not ready, or restarts)'
+  - in-cluster lookups (iperf3-dc2, db.prod) fail; external VIP traffic mostly unaffected (the old web pods keep Redis)
   - no network symptom at all
   detect:
   - signal: web_errors
     label: web 5xx errors (Redis lookup fails)
+  - signal: new_web_pod
+    label: a new web pod appears in the traces
+  - signal: k8s_event
+    label: 'Kubernetes event: CoreDNS scaled to zero'
+    reason: ScalingReplicaSet
+    namespace: kube-system
+    object_prefix: coredns
 controls:
 - name: chaoslab
   provider:
@@ -57,6 +66,24 @@ method:
       namespace: kube-system
       deployment: coredns
       replicas: 0
+- type: action
+  name: hold-before-pod-restart
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: 60
+- type: action
+  name: delete-web-pod
+  provider:
+    type: python
+    module: chaoslab.k8s
+    func: delete_pods
+    arguments:
+      namespace: prod
+      selector: app=web
+      count: 1
 - type: action
   name: hold-fault-window
   provider:

@@ -14,6 +14,8 @@ from chaoslab import config, guard, state
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)   # cEOS uses a self-signed certificate
 
+SNAPSHOT_PREFIX = "cfg-backup-"   # flash:cfg-backup-<UTC timestamp>.cfg: an ordinary operator backup name, nothing that says chaos
+
 
 def call(node: str, cmds: list, fmt: str = "json", timeout: int = 60) -> list:
     host = config.targets()["eos"][node]
@@ -38,7 +40,7 @@ def call(node: str, cmds: list, fmt: str = "json", timeout: int = 60) -> list:
 
 def _snapshot(node: str, run_id: str, what: str) -> None:
     """Snapshot once per switch per run, and register the restore before any change is made."""
-    snap = f"flash:chaos-{run_id}.cfg"
+    snap = f"flash:{SNAPSHOT_PREFIX}{run_id.split('-')[0]}.cfg"   # timestamp only: the run id ends with the experiment id
     if any(f["inverse"].get("node") == node and f["inverse"]["kind"] == "eos_restore" for f in state.active()):
         return
     call(node, [f"copy running-config {snap}"], fmt="text")

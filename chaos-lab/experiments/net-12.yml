@@ -1,0 +1,165 @@
+# Chaos Toolkit experiment (chaos-lab). Run: make run EXP=net-12   Dry run: make dry EXP=net-12
+# The chaoslab control guards it (telemetry and management are off limits), arms a rollback watchdog,
+# and records the ground truth locally. Catalogue and safety rules: README.md.
+version: 1.0.0
+title: 'Total outage: both DCs cut off from the WAN, every BGW eBGP session to wan1 and wan2 shut'
+description: |
+  A change on the border gateways shuts their eBGP sessions to both WAN routers: the WAN-PEERS peer group in the default VRF (the underlay, which also carries the multi-site EVPN between the DCs) and the wan1 / wan2 neighbours in VRF PROD, on dc1-bgw1/2 and dc2-bgw1/2. Neither DC reaches the WAN, the WAN has no route to 192.0.2.10, and the DCs lose each other: every Internet user loses the website and east-west DC1 to DC2 traffic stops. Links stay up; only BGP is down. The management network (172.20.20.0/24) and telemetry are untouched. Rollback is a config replace from each switch's snapshot.
+tags:
+- chaos-lab
+- network
+- bgp
+- outage
+configuration:
+  hold:
+    type: env
+    key: CHAOSLAB_HOLD
+    default: 300
+extensions:
+- name: chaoslab
+  id: net-12
+  layer: network
+  fault: bgp-wan-isolation
+  random: false
+  blast_radius: 4
+  extra_seconds: 0
+  targets:
+  - dc1-bgw1
+  - dc1-bgw2
+  - dc2-bgw1
+  - dc2-bgw2
+  expected:
+  - 'Internet users: the website times out (no route to 192.0.2.10), 100% of requests fail'
+  - 16 BGP sessions on the BGWs go Idle (admin shutdown), 8 per DC, default VRF and VRF PROD; the same sessions drop on wan1 and wan2 (BMP peer down)
+  - every route learned from the WAN withdrawn on the BGWs; the WAN loses 192.0.2.10/32, 10.99.0.0/24 and the DC loopbacks
+  - multi-site EVPN between the DCs goes down (DCI underlay lost), so DC1 to DC2 traffic stops
+  - 'interfaces stay up (oper-status UP): a BGP fault, not a link fault'
+  - config drift on the four BGWs (neighbor shutdown)
+  detect:
+  - signal: web_requests_drop
+    label: web requests drop everywhere
+  - signal: bgp_down
+    label: WAN BGP sessions down on dc1-bgw1
+    device: dc1-bgw1
+  - signal: bgp_down
+    label: WAN BGP sessions down on dc1-bgw2
+    device: dc1-bgw2
+  - signal: bgp_down
+    label: WAN BGP sessions down on dc2-bgw1
+    device: dc2-bgw1
+  - signal: bgp_down
+    label: WAN BGP sessions down on dc2-bgw2
+    device: dc2-bgw2
+controls:
+- name: chaoslab
+  provider:
+    type: python
+    module: chaoslab.control
+steady-state-hypothesis:
+  title: Internet users get the real web app, every BGP session is established, every web replica is ready
+  probes:
+  - type: probe
+    name: lab-healthy
+    tolerance: 0
+    provider:
+      type: python
+      module: chaoslab.probes
+      func: steady_state
+method:
+- type: action
+  name: shut-wan-bgp-dc1-bgw1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-bgw1
+      commands:
+      - router bgp 65100
+      - neighbor WAN-PEERS shutdown
+      - vrf PROD
+      - neighbor 10.255.10.1 shutdown
+      - neighbor 10.255.10.9 shutdown
+- type: action
+  name: shut-wan-bgp-dc1-bgw2
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc1-bgw2
+      commands:
+      - router bgp 65100
+      - neighbor WAN-PEERS shutdown
+      - vrf PROD
+      - neighbor 10.255.10.3 shutdown
+      - neighbor 10.255.10.11 shutdown
+- type: action
+  name: shut-wan-bgp-dc2-bgw1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc2-bgw1
+      commands:
+      - router bgp 65200
+      - neighbor WAN-PEERS shutdown
+      - vrf PROD
+      - neighbor 10.255.10.5 shutdown
+      - neighbor 10.255.10.13 shutdown
+- type: action
+  name: shut-wan-bgp-dc2-bgw2
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: configure
+    arguments:
+      node: dc2-bgw2
+      commands:
+      - router bgp 65200
+      - neighbor WAN-PEERS shutdown
+      - vrf PROD
+      - neighbor 10.255.10.7 shutdown
+      - neighbor 10.255.10.15 shutdown
+  pauses:
+    after: 15
+- type: probe
+  name: evidence-dc1-bgw1
+  provider:
+    type: python
+    module: chaoslab.eos
+    func: show
+    arguments:
+      node: dc1-bgw1
+      command: show ip bgp summary vrf all
+- type: probe
+  name: evidence-wan2
+  provider:
+    type: python
+    module: chaoslab.frr
+    func: show
+    arguments:
+      node: wan2
+      command: show ip bgp vrf PROD 192.0.2.10/32
+- type: probe
+  name: evidence-internet-user
+  provider:
+    type: python
+    module: chaoslab.probes
+    func: http_body
+- type: action
+  name: hold-fault-window
+  provider:
+    type: python
+    module: chaoslab.state
+    func: hold
+    arguments:
+      seconds: ${hold}
+rollbacks:
+- type: action
+  name: undo-every-fault
+  provider:
+    type: python
+    module: chaoslab.state
+    func: rollback

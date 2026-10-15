@@ -1,13 +1,14 @@
 """Kubernetes faults through kubectl from outside the cluster. Nothing is installed in the cluster: a fault is
-either self-healing (pod delete), undone by an inverse (uncordon, scale back), or a transient object in the
-`chaos` namespace that rollback deletes."""
+either self-healing (pod delete), undone by an inverse (uncordon, scale back, the previous image), or a transient
+object in a throwaway namespace that rollback deletes. Names visible in Kubernetes telemetry are neutral: nothing
+says chaos."""
 import json
 import random
 import subprocess
 
 from chaoslab import config, guard, state
 
-CHAOS_NS = "chaos"
+SCRATCH_NS = "batch-jobs"     # throwaway namespace for transient pods (k8s-05); rollback deletes it
 
 
 def kubectl(*args, input: str = None, check: bool = True) -> str:
@@ -60,6 +61,42 @@ def scale(namespace: str, deployment: str, replicas: int, **_) -> str:
     return what
 
 
+def set_image(namespace: str, deployment: str, image: str, container: str = None, strategy: str = None,
+              **_) -> str:
+    """Chaos Toolkit action: a bad deploy, a container image that cannot run (optionally with a new rollout
+    strategy, e.g. Recreate, so no old pod survives). Rollback puts back the exact previous image and strategy:
+    the pod template matches the old ReplicaSet again, which scales back up; then waits for the rollout."""
+    guard.check_namespace(namespace)
+    d = json.loads(kubectl("-n", namespace, "get", "deploy", deployment, "-o", "json"))
+    containers = d["spec"]["template"]["spec"]["containers"]
+    c = next((c for c in containers if c["name"] == container), None) if container else containers[0]
+    if c is None:
+        raise RuntimeError(f"{namespace}/{deployment} has no container {container}")
+    before = {
+        "spec": {
+            "strategy": d["spec"].get("strategy", {}),
+            "template": {"spec": {"containers": [{"name": c["name"], "image": c["image"]}]}},
+        },
+    }
+    fault = {"spec": {"template": {"spec": {"containers": [{"name": c["name"], "image": image}]}}}}
+    if strategy:
+        fault["spec"]["strategy"] = {"type": strategy, "rollingUpdate": None}
+    what = f"set image {namespace}/{deployment} {c['name']} {c['image']} -> {image}" + \
+           (f", strategy {strategy}" if strategy else "")
+    k = config.kubectl_argv() + ["-n", namespace]
+    state.register({"kind": "cmds", "timeout": 240, "argvs": [
+        k + ["patch", "deploy", deployment, "--type", "strategic", "-p", json.dumps(before)],
+        k + ["rollout", "status", "deploy", deployment, "--timeout=180s"],
+    ]}, what)
+    kubectl("-n", namespace, "patch", "deploy", deployment, "--type", "strategic", "-p", json.dumps(fault))
+    return what
+
+
+def show(namespace: str, what: str = "pods", selector: str = None, **_) -> str:
+    """Chaos Toolkit probe: evidence for the journal (read-only kubectl get)."""
+    return kubectl("-n", namespace, "get", what, "-o", "wide", *(["-l", selector] if selector else []), check=False)
+
+
 def stress(node: str, cpus: int = 4, memory_mb: int = 1024, image: str = "nicolaka/netshoot:v0.15", **_) -> str:
     """Chaos Toolkit action: a noisy neighbour pinned to `node` (CPU burn + memory), in a throwaway namespace."""
     guard.check_node(node)
@@ -77,18 +114,18 @@ def stress(node: str, cpus: int = 4, memory_mb: int = 1024, image: str = "nicola
         "apiVersion": "v1",
         "kind": "List",
         "items": [
-            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": CHAOS_NS}},
+            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": SCRATCH_NS}},
             {
                 "apiVersion": "v1",
                 "kind": "Pod",
-                "metadata": {"name": "stress", "namespace": CHAOS_NS, "labels": {"app": "chaos-stress"}},
+                "metadata": {"name": "report-worker", "namespace": SCRATCH_NS, "labels": {"app": "report-worker"}},
                 "spec": {
                     "nodeName": node,
                     "restartPolicy": "Never",
                     "terminationGracePeriodSeconds": 0,
                     "containers": [
                         {
-                            "name": "stress",
+                            "name": "worker",
                             "image": image,
                             "imagePullPolicy": "IfNotPresent",
                             "command": ["python3", "-c", code],
@@ -104,9 +141,9 @@ def stress(node: str, cpus: int = 4, memory_mb: int = 1024, image: str = "nicola
             },
         ],
     }
-    what = f"stress pod on {node}: {cpus} CPUs, {memory_mb} MiB"
+    what = f"stress pod {SCRATCH_NS}/report-worker on {node}: {cpus} CPUs, {memory_mb} MiB"
     state.register({"kind": "cmd", "argv": config.kubectl_argv() + [
-        "delete", "namespace", CHAOS_NS, "--wait=false", "--ignore-not-found"]}, what)
+        "delete", "namespace", SCRATCH_NS, "--wait=false", "--ignore-not-found"]}, what)
     kubectl("apply", "-f", "-", input=json.dumps(manifest))
     return what
 
