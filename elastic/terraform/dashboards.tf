@@ -1,11 +1,11 @@
 # Dashboards in the netops Kibana space, as code.  Every chart is an ES|QL Lens panel; the queries live in
-# dashboards/queries.yml (one place to read and test them).
+# dashboards/queries.yml (one place to read and test them: automation/elastic queries).  The dashboard map and
+# the newer layer dashboards (Overview, Web, Kubernetes, Routing & WAN) are in dashboards-layers.tf.
 #
 # Panels use `config_json` in the Kibana Dashboards API shape ({type, title, data_source, ...}): provider 0.16's
 # typed chart blocks send fields this Serverless Kibana rejects.  Kibana fills in every style default.
-#   Fabric health        /s/netops/app/dashboards#/view/netops-fabric
-#   Web app              /s/netops/app/dashboards#/view/netops-web
-#   Pipeline & changes   /s/netops/app/dashboards#/view/netops-pipeline
+#   Network              /s/netops/app/dashboards#/view/netops-fabric
+#   Telemetry pipeline   /s/netops/app/dashboards#/view/netops-pipeline
 locals {
   esql_source = {
     for name, query in yamldecode(file("${path.module}/dashboards/queries.yml")) :
@@ -19,7 +19,7 @@ locals {
 resource "elasticstack_kibana_dashboard" "fabric" {
   space_id     = elasticstack_kibana_space.netops.space_id
   dashboard_id = "netops-fabric"
-  title        = "NetOps · Fabric health"
+  title        = "NetOps · Network"
   description  = "cEOS fabric: switches reporting, BGP, ports, traffic, errors, LLDP, state changes (gNMI)"
   time_range = {
     from = "now-1h"
@@ -40,10 +40,10 @@ resource "elasticstack_kibana_dashboard" "fabric" {
         x = 0
         y = 0
         w = 48
-        h = 3
+        h = 5
       }
       config_json = jsonencode({
-        content = "**Fabric health**: 14 cEOS switches over gNMI (`metrics-gnmi.otel-*`). Tiles and tables show the last 2 minutes; charts follow the time picker. Also: [Web app](/s/netops/app/dashboards#/view/netops-web) · [Pipeline & changes](/s/netops/app/dashboards#/view/netops-pipeline). Times show in your browser's timezone; lab devices run Australia/Sydney."
+        content = "**Network**: the 14 cEOS switches over gNMI (`metrics-gnmi.otel-*`, state changes in `logs-gnmi.state.otel-*`). Drill down: Link failures, Routing & WAN. ${local.times}\n\n${local.nav}"
       })
     },
     {
@@ -420,289 +420,10 @@ resource "elasticstack_kibana_dashboard" "fabric" {
   ]
 }
 
-resource "elasticstack_kibana_dashboard" "web" {
-  space_id     = elasticstack_kibana_space.netops.space_id
-  dashboard_id = "netops-web"
-  title        = "NetOps · Web app"
-  description  = "web pods: requests, latency, errors, per route and per Kubernetes node (OTel traces)"
-  time_range = {
-    from = "now-1h"
-    to   = "now"
-  }
-  refresh_interval = {
-    pause = false
-    value = 30000
-  }
-  query = {
-    language = "kql"
-    text     = ""
-  }
-  panels = [
-    {
-      type = "markdown"
-      grid = {
-        x = 0
-        y = 0
-        w = 48
-        h = 3
-      }
-      config_json = jsonencode({
-        content = "**Web app**: traces from the `web` pods (`traces-*.otel-*`); kube-probe health checks are excluded from user traffic. Tiles show the last 5 minutes. Also: [Fabric](/s/netops/app/dashboards#/view/netops-fabric) · [Pipeline & changes](/s/netops/app/dashboards#/view/netops-pipeline). Times show in your browser's timezone; lab devices run Australia/Sydney."
-      })
-    },
-    {
-      type = "vis"
-      grid = {
-        x = 0
-        y = 3
-        w = 12
-        h = 6
-      }
-      config_json = jsonencode({
-        type        = "metric"
-        title       = "Requests per minute"
-        data_source = local.esql_source.web_rpm
-        metrics = [
-          {
-            type   = "primary"
-            column = "requests_per_min"
-          },
-        ]
-      })
-    },
-    {
-      type = "vis"
-      grid = {
-        x = 12
-        y = 3
-        w = 12
-        h = 6
-      }
-      config_json = jsonencode({
-        type        = "metric"
-        title       = "p95 latency (ms)"
-        data_source = local.esql_source.web_p95
-        metrics = [
-          {
-            type   = "primary"
-            column = "p95_ms"
-          },
-        ]
-      })
-    },
-    {
-      type = "vis"
-      grid = {
-        x = 24
-        y = 3
-        w = 12
-        h = 6
-      }
-      config_json = jsonencode({
-        type        = "metric"
-        title       = "5xx error rate (%)"
-        data_source = local.esql_source.web_err
-        metrics = [
-          {
-            type   = "primary"
-            column = "error_pct"
-          },
-        ]
-      })
-    },
-    {
-      type = "vis"
-      grid = {
-        x = 36
-        y = 3
-        w = 12
-        h = 6
-      }
-      config_json = jsonencode({
-        type        = "metric"
-        title       = "Pods reporting"
-        data_source = local.esql_source.web_pods
-        metrics = [
-          {
-            type   = "primary"
-            column = "pods"
-          },
-        ]
-      })
-    },
-    {
-      type = "vis"
-      grid = {
-        x = 0
-        y = 9
-        w = 24
-        h = 13
-      }
-      config_json = jsonencode({
-        type  = "xy"
-        title = "Requests by Kubernetes node"
-        legend = {
-          visibility = "visible"
-          position   = "right"
-        }
-        axis = {
-          x = {
-            scale = "temporal"
-            title = {
-              text    = ""
-              visible = false
-            }
-          }
-          y = {
-            scale = "linear"
-            title = {
-              text    = "requests"
-              visible = true
-            }
-          }
-        }
-        layers = [
-          {
-            type        = "bar_stacked"
-            data_source = local.esql_source.web_req_by_node
-            x = {
-              column = "time"
-            }
-            y = [
-              {
-                column = "requests"
-              },
-            ]
-            breakdown_by = {
-              column = "k8s.node.name"
-            }
-          },
-        ]
-      })
-    },
-    {
-      type = "vis"
-      grid = {
-        x = 24
-        y = 9
-        w = 24
-        h = 13
-      }
-      config_json = jsonencode({
-        type  = "xy"
-        title = "p95 latency by route (ms)"
-        legend = {
-          visibility = "visible"
-          position   = "right"
-        }
-        axis = {
-          x = {
-            scale = "temporal"
-            title = {
-              text    = ""
-              visible = false
-            }
-          }
-          y = {
-            scale = "linear"
-            title = {
-              text    = "ms"
-              visible = true
-            }
-          }
-        }
-        layers = [
-          {
-            type        = "line"
-            data_source = local.esql_source.web_lat_by_route
-            x = {
-              column = "time"
-            }
-            y = [
-              {
-                column = "p95_ms"
-              },
-            ]
-            breakdown_by = {
-              column = "http.route"
-            }
-          },
-        ]
-      })
-    },
-    {
-      type = "vis"
-      grid = {
-        x = 0
-        y = 22
-        w = 24
-        h = 10
-      }
-      config_json = jsonencode({
-        type        = "data_table"
-        title       = "Routes"
-        data_source = local.esql_source.web_routes
-        rows = [
-          {
-            column = "route"
-          },
-          {
-            column = "method"
-          },
-        ]
-        metrics = [
-          {
-            column = "requests"
-          },
-          {
-            column = "p50_ms"
-          },
-          {
-            column = "p95_ms"
-          },
-          {
-            column = "errors_5xx"
-          },
-        ]
-      })
-    },
-    {
-      type = "vis"
-      grid = {
-        x = 24
-        y = 22
-        w = 24
-        h = 10
-      }
-      config_json = jsonencode({
-        type        = "data_table"
-        title       = "Nodes (where the requests land)"
-        data_source = local.esql_source.web_nodes
-        rows = [
-          {
-            column = "node"
-          },
-        ]
-        metrics = [
-          {
-            column = "pods"
-          },
-          {
-            column = "requests"
-          },
-          {
-            column = "p95_ms"
-          },
-        ]
-      })
-    },
-  ]
-}
-
 resource "elasticstack_kibana_dashboard" "pipeline" {
   space_id     = elasticstack_kibana_space.netops.space_id
   dashboard_id = "netops-pipeline"
-  title        = "NetOps · Pipeline & changes"
+  title        = "NetOps · Telemetry pipeline"
   description  = "telemetry freshness, collector throughput and queue, GitOps change events"
   time_range = {
     from = "now-1h"
@@ -716,17 +437,17 @@ resource "elasticstack_kibana_dashboard" "pipeline" {
     language = "kql"
     text     = ""
   }
-  panels = [
+  panels = concat([
     {
       type = "markdown"
       grid = {
         x = 0
         y = 0
         w = 48
-        h = 3
+        h = 5
       }
       config_json = jsonencode({
-        content = "**Telemetry pipeline and changes**: is the data fresh, is the collector keeping up, what was deployed. Also: [Fabric](/s/netops/app/dashboards#/view/netops-fabric) · [Web app](/s/netops/app/dashboards#/view/netops-web). Times show in your browser's timezone; lab devices run Australia/Sydney."
+        content = "**Telemetry pipeline**: is the data fresh, is the collector and Kafka keeping up, what was deployed. ${local.times}\n\n${local.nav}"
       })
     },
     {
@@ -1022,5 +743,5 @@ resource "elasticstack_kibana_dashboard" "pipeline" {
         ]
       })
     },
-  ]
+  ], local.layer_panels.pipeline_extra)
 }

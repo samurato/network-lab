@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # Elastic as code: Terraform for everything inside the Elastic project (elastic/terraform/).
-#   automation/elastic plan | apply | role | gh-secrets | output [name]
+#   automation/elastic plan | apply | role | sre-role | gh-secrets | output [name]
 #     role        print the lab API key's role descriptor (paste it in Kibana -> API keys; docs/elastic.md)
+#     sre-role    print the SRE agent API key's role descriptor (read-only telemetry + knowledge base)
+#     queries     run every dashboard query against Elastic, read-only (optional name prefixes)
 #     gh-secrets  copy ELASTIC_ES_URL / ELASTIC_OTLP_ENDPOINT / ELASTIC_API_KEY into the repository secrets (CI)
 # Needs ELASTIC_ES_URL, ELASTIC_KIBANA_URL and the admin ELASTIC_TF_API_KEY (automation/elastic.env).
-# The state outlives the lab (Elastic does too): ~/.local/share/netops/terraform-elastic.tfstate.
+# The state outlives the lab (Elastic does too): ~/.local/share/netops/terraform-elastic-<project>.tfstate.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 source "$ROOT/automation/elastic-env.sh"
 export PATH="$HOME/.local/bin:$PATH"
 export TF_DATA_DIR=${TF_DATA_DIR:-$HOME/.cache/netops/terraform-elastic}
-STATE=${NETOPS_ELASTIC_STATE:-$HOME/.local/share/netops/terraform-elastic.tfstate}
+# one state per Elastic project (named after its host), so pointing elastic.env at another project starts clean
+# instead of reconciling the previous project's resources
+project=$(sed -E 's#^https?://##; s#[.:/].*##' <<<"${ELASTIC_ES_URL:-none}")
+STATE=${NETOPS_ELASTIC_STATE:-$HOME/.local/share/netops/terraform-elastic-$project.tfstate}
 tf() { terraform -chdir="$ROOT/elastic/terraform" "$@"; }
 
 init() {
@@ -38,7 +43,9 @@ case "$cmd" in
   plan)       init; tf plan -input=false "$@" ;;
   apply)      init; tf apply -input=false -auto-approve "$@" ;;
   role)       init; tf output -raw lab_api_key_role_descriptors | python3 -m json.tool ;;
+  sre-role)   init; tf output -raw sre_agent_role_descriptors | python3 -m json.tool ;;
   output)     init; tf output "$@" ;;
   gh-secrets) gh_secrets ;;
-  *)          sed -n '2,7p' "$0"; exit 1 ;;
+  queries)    python3 "$ROOT/automation/dashboard-queries.py" "$@" ;;
+  *)          sed -n '2,9p' "$0"; exit 1 ;;
 esac

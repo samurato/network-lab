@@ -33,7 +33,7 @@ Background: [telemetry.md](telemetry.md) describes what runs today; the design r
 | Kubernetes (Step 11): node / pod / container metrics, cluster state, events, container logs (`metrics-k8s.*`, `logs-k8s.*`) | Cilium, Hubble (Step 12) |
 | The `web` pods' traces reach Elastic (`traces-generic.otel-default`) | k6 results, Synthetics (Step 14) |
 | `change-event.sh` writes ECS change events to `logs-netops.changes-default` | Context indices (topology, IP map, intent), drift results, alert rules, SLOs |
-| Dashboards as code: Fabric health, Web app, Pipeline & changes, **Link failures**, **Fault impact**; **Chaos · Command center** in its own space (chaos-lab, `logs-chaos.*`) | WAN and Kubernetes dashboards |
+| Dashboards as code: Fabric health, Web app, Pipeline & changes, **Link failures**, **Fault impact** | WAN and Kubernetes dashboards |
 | Switches: OpenConfig route tables (AFT) on, clock Australia/Sydney, sFlow test on dc1-leaf1 | Flows: no collector yet (Step 10) |
 | `make verify` checks freshness in Elastic with ES\|QL, now including Kubernetes | |
 
@@ -268,8 +268,7 @@ RFC 3164 senders.
   `k8s_attributes` to the traces, which already carry `k8s.node.name`).
 
 **Done when:** `kubectl delete pod` on a web pod shows up in `logs-k8s.events` within 15 seconds. *Seen on apply: a
-collector rollout's Killing / Scheduled / Pulled / Started events arrived within seconds; the web-pod drill is chaos-lab
-`k8s-01`.*
+collector rollout's Killing / Scheduled / Pulled / Started events arrived within seconds.*
 
 ### Step 12 – Cilium and Hubble
 - [ ] `kubernetes/terraform/cilium.tf`:
@@ -316,8 +315,8 @@ collector rollout's Killing / Scheduled / Pulled / Started events arrived within
 - [ ] SLOs: web availability and latency.
 - [ ] ML anomaly detection jobs: interface errors and utilisation; trace latency.
 - [ ] Dashboards: fabric, WAN, k8s/Cilium, and an app → network drill-down. *Started early (2026-10-12): fabric,
-  web app and pipeline dashboards in `elastic/terraform/dashboards.tf`; 2026-10-13: Link failures, Fault impact
-  and the Chaos command center (`dashboards-faults.tf`, `dashboards-chaos.tf`). WAN, k8s/Cilium and the drill-down
+  web app and pipeline dashboards in `elastic/terraform/dashboards.tf`; 2026-10-13: Link failures and Fault impact
+  (`dashboards-faults.tf`). WAN, k8s/Cilium and the drill-down
   come with their data.*
 
 **Done when:** every fault drill below raises its alert.
@@ -345,7 +344,7 @@ collector rollout's Killing / Scheduled / Pulled / Started events arrived within
 |---|---|---|---|
 | 2026-10-14 | 11 | (this PR) | Kubernetes telemetry: in-cluster EDOT (`otel-agent` DaemonSet, `otel-cluster` Deployment) → gateway → `metrics-k8s.kubelet` (6/6 nodes), `metrics-k8s.cluster`, `logs-k8s.events`, `logs-k8s.container`. Also: lab VM powered off from outside 03:14–11:20 UTC (no guest cause), redeployed; cEOS rsyslog crash loop traced to the host's AppArmor rsyslogd profile (disabled by the owner) |
 | 2026-10-14 | 7 (part) | #22 | WAN BMP from wan1/wan2 (pmbmpd) → `logs-bgp.bmp.otel-default` |
-| 2026-10-13 | 16 (part), chaos | #16, #20 | 30 s samples of port / BGP / LLDP state (on-change alone left "now" panels empty); dashboards Link failures, Fault impact, Chaos · Command center; chaos-lab (18 experiments, traffic, detection scorecard, `logs-chaos.*` with the lab key) |
+| 2026-10-13 | 16 (part) | #20 | 30 s samples of port / BGP / LLDP state (on-change alone left "now" panels empty); dashboards Link failures, Fault impact |
 | 2026-10-13 | Kafka buffer | (this PR) | Kafka (`apache/kafka:3.9.1`, one KRaft broker, 172.20.20.252) between the collector and Elastic: receive pipelines → `kafka/out` → topics → `kafka/elastic` → `elasticsearch/elastic`, offsets committed after Elastic accepted. Outage test: Elastic unreachable 3½ min, lag 113 messages, drained in ~50 s, no gap. `make verify` checks the consumer lag (67 PASS) |
 | 2026-10-13 | 6 | #12 | gnmic: AFT routes, EVPN/VXLAN, MTU, OSPF LSA count; CPU dropped; short `net.*` names; state changes → `logs-gnmi.state` via a shared file and `file_log`. 1,897 series (was ~3,600). Found: no OSPF neighbour state over gNMI on cEOS 4.36; `in` is an ES\|QL keyword; logsdb hides a record-level `host.name` (moved to the resource); gnmic file loader re-subscribing every 30 s (removed); exporter queue too small (sized). Withdraw drill passed. `make verify` 0 FAIL |
 | 2026-10-13 | – | – | Lab shut down. Next: Step 6. Open: cEOS rsyslog crash loop (step 7), leftover `metrics-prometheusreceiver.otel-default` data stream from the first test |
