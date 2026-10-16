@@ -40,7 +40,7 @@ resource "elasticstack_kibana_dashboard" "fabric" {
         x = 0
         y = 0
         w = 48
-        h = 3
+        h = 5
       }
       config_json = jsonencode({
         content = "**Network**: the 14 cEOS switches over gNMI (`metrics-gnmi.otel-*`, state changes in `logs-gnmi.state.otel-*`). Drill down: Link failures, Routing & WAN. ${local.times}\n\n${local.nav}"
@@ -444,7 +444,7 @@ resource "elasticstack_kibana_dashboard" "pipeline" {
         x = 0
         y = 0
         w = 48
-        h = 3
+        h = 5
       }
       config_json = jsonencode({
         content = "**Telemetry pipeline**: is the data fresh, is the collector and Kafka keeping up, what was deployed. ${local.times}\n\n${local.nav}"

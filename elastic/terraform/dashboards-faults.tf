@@ -26,7 +26,7 @@ resource "elasticstack_kibana_dashboard" "links" {
         x = 0
         y = 0
         w = 48
-        h = 3
+        h = 5
       }
       config_json = jsonencode({
         content = "**Link failures**: port up/down events and LLDP from the gNMI state log (`logs-gnmi.state.otel-*`), counters from `metrics-gnmi.otel-*`. Each failed link shows as two rows, one per end; *far end* is the LLDP neighbour. ${local.times}\n\n${local.nav}"

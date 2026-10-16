@@ -317,9 +317,10 @@ ovr_status: |
           bgp_docs = COUNT(*) WHERE net.bgp.session_state IS NOT NULL AND @timestamp > NOW() - 1 minute,
           bgp_bad = COUNT(*) WHERE net.bgp.session_state < 6 AND @timestamp > NOW() - 1 minute,
           ports_down = COUNT(*) WHERE net.if.oper_status == 0 AND @timestamp > NOW() - 1 minute,
-          queue = MAX(otelcol_exporter_queue_size) WHERE exporter == "elasticsearch/elastic"
+          queue = MAX(otelcol_exporter_queue_size) WHERE exporter == "elasticsearch/elastic",
+          capacity = MAX(otelcol_exporter_queue_capacity) WHERE exporter == "elasticsearch/elastic"
   | EVAL err_pct = CASE(web_req > 0, 100.0 * web_5xx / web_req, 0.0), p95_ms = COALESCE(web_p95, 0) / 1000000,
-         web_avail = COALESCE(web_avail, 0), web_desired = COALESCE(web_desired, 0), queue = COALESCE(queue, 0)
+         web_avail = COALESCE(web_avail, 0), web_desired = COALESCE(web_desired, 0), queue = COALESCE(queue, 0), capacity = COALESCE(capacity, 1000)
   | EVAL layer = ["1 Web", "2 Kubernetes", "3 Network", "4 Telemetry"]
   | MV_EXPAND layer
   | EVAL status = CASE(
@@ -328,13 +329,13 @@ ovr_status: |
                                          nodes_not_ready > 0 OR web_avail < web_desired OR deploy_short > 0 OR ds_short > 0, "DEGRADED", "OK"),
            layer == "3 Network", CASE(switches == 0 OR bgp_bad * 2 > bgp_docs, "DOWN",
                                       switches < 14 OR bgp_bad > 0 OR ports_down > 0, "DEGRADED", "OK"),
-           CASE(switches == 0, "DOWN", switches < 14 OR queue > 0, "DEGRADED", "OK")),
+           CASE(switches == 0, "DOWN", switches < 14 OR queue > capacity / 10, "DEGRADED", "OK")),
          detail = CASE(
            layer == "1 Web", CONCAT(TO_STRING(ROUND(web_req / 2.0)), " req/min, ", TO_STRING(ROUND(err_pct, 2)), "% 5xx, p95 ", TO_STRING(ROUND(p95_ms)), " ms"),
            layer == "2 Kubernetes", CONCAT(TO_STRING(nodes - nodes_not_ready), "/", TO_STRING(nodes), " nodes ready, web ", TO_STRING(web_avail), "/", TO_STRING(web_desired),
                                            ", workloads short: ", TO_STRING(deploy_short + ds_short)),
            layer == "3 Network", CONCAT(TO_STRING(switches), "/14 switches, BGP samples not established: ", TO_STRING(bgp_bad), ", port-down samples: ", TO_STRING(ports_down)),
-           CONCAT(TO_STRING(switches), "/14 switches streaming, export queue ", TO_STRING(queue)))
+           CONCAT(TO_STRING(switches), "/14 switches streaming, export queue ", TO_STRING(queue), " of ", TO_STRING(capacity)))
   | EVAL layer = SUBSTRING(layer, 3)
   | KEEP layer, status, detail
 ovr_web_ts: |
