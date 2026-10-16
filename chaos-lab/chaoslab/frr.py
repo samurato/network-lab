@@ -18,6 +18,31 @@ def errors(out: str) -> list:
     return [line for line in lines if line.startswith("%") and line not in _BENIGN]
 
 
+# Lines that only open or close a config context; everything else is config the fault added.
+_CONTEXT = ("vrf ", "exit", "end", "router ", "address-family ")
+
+
+def fault_lines(lines: list) -> list:
+    return [line.strip() for line in lines if not line.strip().startswith(_CONTEXT)]
+
+
+def still_present(lines: list, running: str) -> list:
+    """The fault's lines still in the running config (indentation ignored)."""
+    have = {line.strip() for line in running.splitlines()}
+    return [line for line in fault_lines(lines) if line in have]
+
+
+def undo(node: str, argv: list, lines: list) -> str:
+    """Rollback of configure(): replay the undo. If it fails because the config is already gone (a GitOps
+    redeploy fixed the fault first, as it should), that is a successful rollback, checked against the
+    running config, not assumed."""
+    out = config.sh(argv, check=False)
+    left = still_present(lines, show(node, "show running-config"))
+    if left:
+        raise RuntimeError(f"{node}: undo failed and still configured: {'; '.join(left)}: {out.strip()[:300]}")
+    return "undone" if not errors(out) else "already gone"
+
+
 def configure(node: str, lines: list, undo: list, **_) -> str:
     """Chaos Toolkit action: apply FRR config lines; `undo` is registered first and replayed on rollback."""
     guard.check_node(node)
@@ -27,7 +52,8 @@ def configure(node: str, lines: list, undo: list, **_) -> str:
         guard.check_prefix(line)
     what = "; ".join(line.strip() for line in lines)
     with guard.lab_lock():
-        state.register({"kind": "cmd", "argv": _vtysh(node, undo)}, f"{node}: {what}")
+        state.register({"kind": "frr_undo", "node": node, "argv": _vtysh(node, undo), "lines": lines},
+                       f"{node}: {what}")
         out = config.sh(_vtysh(node, lines))
     if errors(out):
         raise RuntimeError(f"{node}: {out.strip()}")
