@@ -318,7 +318,7 @@ counters and BGP state, so a problem at any hop is visible in the telemetry.
 | k6 | `inet-k6` behind wan2, 198.51.100.11 | always on: 5 iterations/s to `http://192.0.2.10`, each `GET /` + `GET /api/products` (10 req/s) | `network/wan.yml` (`TARGET`, `RPS`), `containerlab/static/generators/baseline.js` |
 | nping, iperf3, curl, mtr | `attacker1` behind wan1, 203.0.113.66 | idle; run on demand. Uplink capped at 20 Mbit/s by `tc`; no Internet egress | `network/wan.yml` (`rate_limit`) |
 | iperf3 servers | pods `iperf3-dc1`, `iperf3-dc2` | listening; drive DC1 ↔ DC2 load across the DCI | `kubernetes/terraform/apps.tf` |
-| fault injection | any link | `automation/lab netem …` (containerlab netem: delay, loss, jitter, rate) | — |
+| link impairment | any link | `automation/lab netem …` (containerlab netem: delay, loss, jitter, rate) | — |
 
 Examples are in the [DevOps guide](devops-guide.md#traffic-and-faults).
 
