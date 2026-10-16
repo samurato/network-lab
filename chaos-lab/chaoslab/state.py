@@ -78,8 +78,6 @@ def start_run(ext: dict, title: str) -> dict:
         "started": now(),
         "injected": [],
     }
-    from chaoslab import publish
-    run["publish"] = publish.enabled()    # false: this run never goes to Elastic, whoever touches it later
     with _locked():
         _write("current.json", run)
     return run
@@ -106,8 +104,6 @@ def register(inverse: dict, what: str) -> None:
         run["injected"].append({"what": what, "at": now()})
         _write("current.json", run)
     log.info(f"chaoslab: injecting {what}")
-    from chaoslab import publish
-    publish.event("fault.inject", run, what=what)
 
 
 def run_inverse(inverse: dict) -> None:
@@ -139,8 +135,6 @@ def rollback(**_) -> list:
                 run_inverse(f["inverse"])
                 done.append(f["what"])
                 log.info(f"chaoslab: rolled back {f['what']}")
-                from chaoslab import publish
-                publish.event("fault.rollback", current(), what=f["what"])
             except Exception as e:  # keep going: undo as much as possible, keep what failed for a retry
                 failed.append(f)
                 log.error(f"chaoslab: rollback of {f['what']} failed: {e}")
@@ -178,9 +172,6 @@ def finish_run(status: str, recovered: bool | None = None, recovery_seconds: flo
         with open(_path("runs.jsonl"), "a") as f:
             f.write(json.dumps(run) + "\n")
         _path("current.json").unlink(missing_ok=True)
-    from chaoslab import publish
-    publish.run(run)
-    publish.event("run.end", run, message=f"{status}; recovered={recovered} in {recovery_seconds}s")
     return run
 
 
@@ -195,10 +186,6 @@ def set_scorecard(run_id: str, scorecard: dict) -> None:
         tmp = p.with_suffix(".tmp")
         tmp.write_text("".join(json.dumps(r) + "\n" for r in runs))
         tmp.replace(p)
-    from chaoslab import publish
-    for r in runs:
-        if r["run_id"] == run_id:
-            publish.run(r)
 
 
 def history(n: int = 10) -> list:

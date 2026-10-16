@@ -84,8 +84,6 @@ def start(profiles: list, dry: bool = False) -> None:
             config.sh(["docker", "exec", "-d", config.container(node), "sh", "-c", cmd])
     if not dry:
         print(f"traffic running: {', '.join(profiles)}. Stop with `make traffic-stop`.")
-        from chaoslab import publish
-        publish.event("traffic.start", what=" ".join(profiles), message=f"{len(cmds)} generators")
 
 
 def stop() -> None:
@@ -98,9 +96,6 @@ def stop() -> None:
         print(f"stopped {busy[n]} process(es) on {n}")
     if not busy:
         print("no traffic running")
-    else:
-        from chaoslab import publish
-        publish.event("traffic.stop", message=f"stopped on {len(busy)} nodes")
 
 
 def _ping(src: str, dst_ip: str) -> tuple:

@@ -7,12 +7,7 @@ PROFILE ?=
 COUNT   ?= 5
 GAP     ?= 120
 
-# PUBLISH=0 keeps everything local: no runs, events or catalogue to Elastic (the scorecard still reads it)
-ifdef PUBLISH
-export CHAOSLAB_PUBLISH := $(PUBLISH)
-endif
-
-.PHONY: help venv list validate test dry dry-all run random monkey monkey-dry stop status traffic-start traffic-dry traffic-stop traffic-status score publish
+.PHONY: help venv list validate test dry dry-all run random monkey monkey-dry stop status traffic-start traffic-dry traffic-stop traffic-status score report
 
 help:            ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-15s %s\n", $$1, $$2}'
@@ -30,7 +25,7 @@ validate:        ## Chaos Toolkit schema validation of every experiment
 
 test:            ## self-tests: guard (telemetry and management refused), vtysh error check; changes nothing
 	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) tests/test_guard.py
-	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) tests/test_publish.py
+	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) tests/test_report.py
 	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) tests/test_frr.py
 
 dry:             ## dry run EXP=<id>: guard + steady-state probes only, nothing injected
@@ -39,13 +34,13 @@ dry:             ## dry run EXP=<id>: guard + steady-state probes only, nothing 
 dry-all:         ## dry run every experiment
 	@for f in experiments/*.yml; do id=$$(basename $$f .yml); $(CLI) run $$id --dry || exit 1; done
 
-run:             ## RUN EXP=<id> (injects the fault; hold: CHAOSLAB_HOLD, default 300 s; PUBLISH=0: nothing to Elastic)
+run:             ## RUN EXP=<id> (injects the fault; hold: CHAOSLAB_HOLD, default 300 s)
 	@$(CLI) run $(EXP)
 
 random:          ## Chaos Monkey mode: run one random experiment marked random
 	@$(CLI) random
 
-monkey:          ## Chaos Monkey campaign: COUNT=5 random experiments, GAP=120 s apart (+-50%); PUBLISH=0: nothing to Elastic
+monkey:          ## Chaos Monkey campaign: COUNT=5 random experiments, GAP=120 s apart (+-50%)
 	@$(CLI) monkey $(COUNT) $(GAP)
 
 monkey-dry:      ## the campaign with dry runs only (nothing injected, quick)
@@ -73,5 +68,5 @@ traffic-status:  ## running generators + host-to-host ping matrix (loss / latenc
 score:           ## detection scorecard of RUN=<run_id> (default: the last run): did the signals reach Elastic?
 	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.scorecard $(or $(RUN),last)
 
-publish:         ## send the catalogue and every recorded run to Elastic (Chaos command center); safe to repeat
-	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.publish
+report:          ## local HTML scorecard of every run (~/clab-runs/chaos/report.html); never sent anywhere
+	@PYTHONPATH=$(CURDIR) PYTHONDONTWRITEBYTECODE=1 $(PY) -m chaoslab.report
