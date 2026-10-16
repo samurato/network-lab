@@ -633,7 +633,7 @@ ovr_slo: |
           sli = LAST(sliValue, summaryUpdatedAt), target = LAST(slo.objective.target, summaryUpdatedAt),
           budget = LAST(errorBudgetRemaining, summaryUpdatedAt)
       BY slo.id, slo.instanceId
-  | EVAL slo = TO_STRING(name), layer = tags, sli_pct = ROUND(sli * 100, 3), objective_pct = ROUND(target * 100, 2),
+  | EVAL slo = TO_STRING(name), layer = tags, sli_pct = CASE(sli >= 0, ROUND(sli * 100, 3)), objective_pct = ROUND(target * 100, 2),
          budget_left_pct = ROUND(budget * 100, 1),
          rank = CASE(status == "VIOLATED", 0, status == "DEGRADING", 1, status == "NO_DATA", 2, 3)
   | SORT rank, layer, slo

@@ -127,11 +127,12 @@ locals {
       description = "Minutes in which no cabled fabric port reports oper-status down"
       tag         = "network"
       index       = "metrics-gnmi.otel-*"
-      filter      = "net.if.oper_status : 0"
+      filter      = "net.if.oper_status : *"
       metrics = [
         {
           name        = "A"
           aggregation = "doc_count"
+          filter      = "net.if.oper_status : 0"
         },
       ]
       equation   = "A"
@@ -193,6 +194,7 @@ resource "elasticstack_kibana_slo" "timeslices" {
           name        = metrics.value.name
           aggregation = metrics.value.aggregation
           field       = try(metrics.value.field, null)
+          filter      = try(metrics.value.filter, null)
         }
       }
     }
