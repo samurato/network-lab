@@ -75,7 +75,7 @@ Two API keys:
 | Key | Name in Kibana | Privileges | Lives in |
 |---|---|---|---|
 | Admin key | `LAB_HACKATHON KEY` (or any) | your own (no restriction) | `ELASTIC_TF_API_KEY`, lab host only |
-| Lab key | `netops-lab` | write `logs-*-*`, `metrics-*-*`, `traces-*-*`; read the lab's own data streams; cluster `monitor` | `ELASTIC_API_KEY`, lab host and CI |
+| Lab key | `netops-lab` | write the lab's data streams only (`metrics-*.otel-*`, `traces-*.otel-*`, `logs-*.otel-*`, `logs-netops.*`); read the lab's own data streams; cluster `monitor` | `ELASTIC_API_KEY`, lab host and CI |
 
 The lab key's privileges are code (`elastic/terraform/security.tf`), but the key itself is created by hand
 once: Elasticsearch doesn't let an API key create another API key with privileges, and on Serverless people
@@ -239,7 +239,18 @@ In Kibana, open the **NetOps lab** space, then Dashboards:
 | NetOps · Link failures | `netops-links` | ports down now, port-down events, ports that flapped, routes withdrawn; port DOWN/UP events and ports down over time; failed links with both ends (LLDP far end), down and up times and duration; traffic per port (moving to the surviving links); routes withdrawn per switch; errors and flaps; port/LLDP and BGP event logs |
 | NetOps · Fault impact | `netops-impact` | one time axis across layers: ports down, BGP not established, route changes, web 5xx now; state changes by type; ports down and BGP sessions down over time; route changes and traffic per switch; web requests per node, p95 and 5xx; what changed; deploys |
 
-In the **Chaos lab** space: **Chaos · Command center** (`chaos-command-center`): chaos-lab's runs, the fault in progress, recovery, the detection scorecard (which expected signals reached Elastic and how fast), coverage per experiment, observability gaps and the chaos timeline. chaos-lab writes its `logs-chaos.*` data streams with the lab key (append-only). They are the answer key for testing an agent: the lab key can write them but not read them, and they live in their own space (`elastic/terraform/chaos.tf`; [chaos-lab/README.md](../chaos-lab/README.md)). Don't widen the lab key's read privileges to `logs-*`.
+Keys and who uses them:
+
+- The **lab key** writes only the lab's data streams (`metrics-*.otel-*`, `traces-*.otel-*`, `logs-*.otel-*`,
+  `logs-netops.*`) and reads them back for `make verify`. Print its role with `automation/elastic role`.
+- The **SRE agent key** is read-only: the lab's metrics, the `web` traces (`traces-generic.otel-*`), the
+  `logs-gnmi.*`, `logs-bgp.*`, `logs-k8s.*` and `logs-netops.*` streams, the knowledge base (`kb-*`), and
+  Discover / Dashboards / Agent Builder in the default and NetOps spaces. Print its role with
+  `automation/elastic sre-role` and create the key in Kibana -> API keys.
+- Kibana Agent Builder runs with its **caller's** privileges. Always call the agent with the SRE agent key (or
+  a user with that role), never as an admin.
+- Both roles are allow-lists. Don't widen either to `logs-*` or `traces-*`: other data in the project, such as
+  the agent's own conversation traces (`traces-agent_builder`), must stay out of reach.
 
 - Tiles and "now" tables use a fixed short window (2 or 5 minutes). Charts follow the time picker through
   `?_tstart` / `?_tend`. Each dashboard refreshes every 30 s.

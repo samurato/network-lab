@@ -26,3 +26,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: automation/plan-report.sh plan.log | gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body-file -
+  isolation:
+    # The SRE agent must never learn about chaos-lab from the lab's own data: no PR mixes chaos-lab/ with lab
+    # changes (its title would ride along into a change event), and nothing the agent reads mentions it.
+    runs-on: [self-hosted, netops-lab]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: chaos-lab kept apart from the lab
+        run: automation/isolation-check.sh "origin/${{ github.base_ref }}"
+      - name: chaos-lab self-tests
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -q '^chaos-lab/'; then
+            make -C chaos-lab test
+          else
+            echo "chaos-lab unchanged"
+          fi

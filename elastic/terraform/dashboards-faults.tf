@@ -1,4 +1,4 @@
-# Fault dashboards, for chaos runs and real incidents alike (telemetry only: the chaos answer key never comes here).
+# Fault dashboards: what a link failure or any other fault looks like in the telemetry.
 # Queries live in dashboards/queries.yml (lnk_*, imp_*), and some panels reuse the Fabric / Web / Pipeline ones.
 #   Link failures   /s/netops/app/dashboards#/view/netops-links
 #   Fault impact    /s/netops/app/dashboards#/view/netops-impact

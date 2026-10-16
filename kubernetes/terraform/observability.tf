@@ -12,7 +12,7 @@
 # (kubelet_stats, k8s_attributes, file_log, otlp_grpc). The image is the gateway's (generated/kubernetes.yml from
 # automation/render.py), side-loaded into every node by nodes.tf.
 locals {
-  otel_namespace = "otel" # chaos-lab's guard refuses any namespace matching "otel": telemetry is off limits
+  otel_namespace = "otel"
   otel_image     = local.intent.telemetry.collector_image
 
   otel_exporters = {

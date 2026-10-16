@@ -6,9 +6,11 @@
 set -uo pipefail
 status=${1:-unknown}; log=${2:-/dev/null}
 source "$(dirname "$0")/elastic-env.sh"   # CI: repository secrets; lab host: automation/elastic.env
+# the newest commit that changed the lab: chaos-lab/ commits never describe a deploy
+commit=$(git log -1 --format=%H -- . ':(exclude)chaos-lab')
 devices=$(grep -E '^[a-z0-9-]+ +: ok=' "$log" 2>/dev/null | awk '$4 != "changed=0" {print $1}' | jq -R . | jq -sc .)
-event=$(jq -nc --arg ts "$(date -u +%FT%TZ)" --arg sha "$(git rev-parse HEAD)" \
-  --arg msg "$(git log -1 --pretty=%s)" --arg author "$(git log -1 --pretty=%an)" \
+event=$(jq -nc --arg ts "$(date -u +%FT%TZ)" --arg sha "$commit" \
+  --arg msg "$(git log -1 --pretty=%s "$commit")" --arg author "$(git log -1 --pretty=%an "$commit")" \
   --arg status "$status" --argjson devices "${devices:-[]}" \
   '{"@timestamp":$ts, event:{kind:"event", category:["configuration"], type:["change"], outcome:$status},
     git:{sha:$sha, message:$msg, author:$author}, netops:{changed_devices:$devices, source:"gitops-deploy"}}')
