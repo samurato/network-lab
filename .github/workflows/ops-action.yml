@@ -2,7 +2,7 @@
 # The gate already checked the action against the allow-list (chaos2cure-lab elastic/knowledge/actions.json);
 # this workflow checks again, because anyone with dispatch rights can call it.
 #   config     git.revert            opens a revert PR; the PR review is the approval, deploy.yml applies it
-#   reconcile  gitops.redeploy       re-runs deploy.yml on main (converge everything to Git)
+#   reconcile  gitops.redeploy       converges the lab to main here (lab converge, make apply, k8s apply)
 #              gitops.k8s-apply      Kubernetes Terraform apply only
 #   run        k8s.uncordon | k8s.scale | k8s.rollout-restart
 # reconcile and run pause on the `ops-approval` environment until a required reviewer approves.
@@ -64,7 +64,10 @@ jobs:
     runs-on: [self-hosted, netops-lab]
     environment: ops-approval
     env:
+      EOS_USER: ${{ secrets.EOS_USER }}
+      EOS_PASSWORD: ${{ secrets.EOS_PASSWORD }}
       ELASTIC_ES_URL: ${{ secrets.ELASTIC_ES_URL }}
+      ELASTIC_OTLP_ENDPOINT: ${{ secrets.ELASTIC_OTLP_ENDPOINT }}
       ELASTIC_API_KEY: ${{ secrets.ELASTIC_API_KEY }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -90,7 +93,9 @@ jobs:
           set -euo pipefail
           ns=$(jq -r '.namespace // empty' <<<"$PARAMS"); dep=$(jq -r '.deployment // empty' <<<"$PARAMS")
           case "$ACTION" in
-            gitops.redeploy)     gh workflow run deploy.yml --ref main; echo "deploy.yml dispatched on main" ;;
+            # Converge here, in the approved job, so this run's outcome (and its change event) is the real result;
+            # same steps as deploy.yml without its freshness verify (the requester re-runs its own checks).
+            gitops.redeploy)     automation/lab converge && make apply 2>&1 | tee apply.log && automation/k8s apply ;;
             gitops.k8s-apply)    automation/k8s apply ;;
             k8s.uncordon)        for n in $(jq -r '.nodes | if type == "array" then .[] else gsub(","; " ") end' <<<"$PARAMS"); do
                                    automation/k8s kubectl uncordon -- "$n"; done ;;
