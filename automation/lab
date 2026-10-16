@@ -44,6 +44,7 @@ topology_pending() { ! cmp -s "$SRC/netops.clab.yml" "$BUNDLE/netops.clab.yml"; 
 
 copy_bundle() {   # in place, never unlink+create: a bind-mounted file must keep its inode
   mkdir -p "$BUNDLE"
+  reclaim_frr_configs
   rsync -rltp --inplace --delete --exclude '._*' \
     --exclude /telemetry/otelcol/profile.yml --exclude /telemetry/otelcol/secrets/ \
     --include /telemetry/state/README.md --exclude '/telemetry/state/*' \
@@ -52,6 +53,18 @@ copy_bundle() {   # in place, never unlink+create: a bind-mounted file must keep
   # by the telemetry containers (uid 1000) whoever runs the lab
   chmod 777 "$BUNDLE/telemetry/state" "$BUNDLE/telemetry/kafka-data"
   collector_profile
+}
+
+reclaim_frr_configs() {   # FRR rewrites its bind-mounted frr.conf as its own container user (mode 600) after a
+  # reload, which leaves the bundle copy unwritable for the in-place sync. Take it back through the container
+  # (container root can chown the bind mount; we need no sudo), keeping the inode the bind mount points at.
+  local f r
+  for f in "$BUNDLE"/configs/*.conf; do
+    [[ -e $f && ! -w $f ]] || continue
+    r=$(basename "$f" .conf)
+    docker exec "clab-netops-$r" sh -c "chown $(id -u):$(id -g) /etc/frr/frr.conf && chmod 644 /etc/frr/frr.conf" \
+      && echo "reclaimed $f from the $r container" || echo "WARN: could not reclaim $f" >&2
+  done
 }
 
 collector_profile() {   # profile + secrets from the Elastic settings; secrets only in files the collector reads
