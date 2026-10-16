@@ -129,10 +129,12 @@ if [[ -n ${ELASTIC_ES_URL:-} && -n ${ELASTIC_API_KEY:-} ]]; then
     | STATS docs = COUNT(*), devices = COUNT_DISTINCT(host.name)')
   [[ ${devs:-0} -eq $ceos ]] && ok "metrics-gnmi: ${docs} docs from $devs/$ceos switches in the last 2 min" \
     || bad "metrics-gnmi: ${devs:-0}/$ceos switches sent data in the last 2 min"
-  # state changes are sent on change only (a quiet fabric sends none), so: every switch has a state history
+  # state changes are sent on change only (a quiet fabric sends none), so: every switch has a state history.
+  # History checks warn instead of failing: a fresh Elastic deployment has none yet, and waiting for one made
+  # every deploy sit out --wait and end red although the network was fine. Live-data checks above still fail.
   IFS=, read -r docs devs < <(esql 'FROM logs-gnmi.state.otel-* | STATS docs = COUNT(*), devices = COUNT_DISTINCT(host.name)')
   [[ ${devs:-0} -eq $ceos ]] && ok "logs-gnmi.state: ${docs} state changes from $devs/$ceos switches (routes, BGP, ports, EVPN)" \
-    || bad "logs-gnmi.state: ${devs:-0}/$ceos switches have state changes in Elastic"
+    || warn "logs-gnmi.state: ${devs:-0}/$ceos switches have state changes in Elastic (a quiet switch sends none until something changes, e.g. after moving to a new deployment)"
   n=$(esql 'FROM metrics-otelcol.otel-* | WHERE @timestamp > NOW() - 2 minutes | STATS n = COUNT(*)')
   [[ ${n:-0} -gt 0 ]] && ok "metrics-otelcol: collector health metrics arriving ($n docs in 2 min)" \
     || bad "metrics-otelcol: no collector health metrics in the last 2 min"
@@ -154,6 +156,6 @@ if [[ -n ${ELASTIC_ES_URL:-} && -n ${ELASTIC_API_KEY:-} ]]; then
   # events only come when something happens: their stream existing at all is the check
   n=$(esql 'FROM logs-k8s.events.otel-* | STATS n = COUNT(*)')
   [[ ${n:-0} -gt 0 ]] && ok "logs-k8s.events: $n Kubernetes events in Elastic" \
-    || bad "logs-k8s.events: no Kubernetes events in Elastic (otel-cluster Deployment)"
+    || warn "logs-k8s.events: no Kubernetes events in Elastic yet (otel-cluster Deployment; none until something happens)"
 fi
 exit $fail
