@@ -26,6 +26,10 @@ locals {
       retention   = "30d"
       description = "cEOS state changes from gnmic: routes (AFT), BGP, LLDP, oper-status, VTEPs, VNIs, MACs"
     }
+    "bgp.bmp" = {
+      retention   = "30d"
+      description = "BGP from the WAN routers (wan1, wan2) over BMP: updates, withdraws, peer state (pmbmpd)"
+    }
     "k8s.events" = {
       retention   = "30d"
       description = "Kubernetes events: scheduling, pulls, probes, kills, evictions (k8s_events, in-cluster EDOT)"

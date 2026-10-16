@@ -3,6 +3,10 @@
 # Metrics have short names (net.if.in_octets, catalogue in docs/telemetry.md); gNMI keys keep gnmic's hyphens,
 # so they need backticks (`neighbor_neighbor-address`).
 # Counters in metrics-gnmi are TSDS counters: TS ... RATE() for rates, TO_DOUBLE() for MAX/MIN.
+# Event streams (logs-gnmi.state, logs-k8s.events, logs-netops.*) start with `SET unmapped_fields = "nullify"`:
+# a field joins the mapping only with its first event (a port that never went down has no state.oper_status yet),
+# and the panel must show "nothing happened", not an error.
+# The lab's size is fixed by its intent: 14 switches (network/), 6 Kubernetes nodes, 3 control-plane (kubernetes/).
 
 # ---- Fabric health
 fab_switches: |
@@ -87,6 +91,7 @@ fab_lldp: |
   | STATS BY device = host.name, interface = interface_name, neighbour = value
   | SORT device, interface
 fab_state_changes: |
+  SET unmapped_fields = "nullify";
   FROM logs-gnmi.state.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` IN ("aft", "bgp-state", "if-state", "evpn")
   | EVAL object = COALESCE(`ipv4-entry_prefix`, `ipv6-entry_prefix`, `neighbor_neighbor-address`, vtep, mac, interface_name),
@@ -99,35 +104,35 @@ fab_state_changes: |
 
 # ---- Web app (traces from the web pods; kube-probe health checks excluded from user traffic)
 web_rpm: |
-  FROM traces-*.otel-*
+  FROM traces-generic.otel-*
   | WHERE @timestamp > NOW() - 5 minutes AND service.name == "web" AND kind == "Server" AND NOT http.user_agent LIKE "kube-probe*"
   | STATS requests_per_min = ROUND(COUNT(*) / 5.0, 1)
 web_p95: |
-  FROM traces-*.otel-*
+  FROM traces-generic.otel-*
   | WHERE @timestamp > NOW() - 5 minutes AND service.name == "web" AND kind == "Server" AND NOT http.user_agent LIKE "kube-probe*"
   | STATS p95_ms = ROUND(PERCENTILE(duration, 95) / 1000000, 1)
 web_err: |
-  FROM traces-*.otel-*
+  FROM traces-generic.otel-*
   | WHERE @timestamp > NOW() - 5 minutes AND service.name == "web" AND kind == "Server"
   | STATS errors = SUM(CASE(http.status_code >= 500, 1, 0)), total = COUNT(*)
   | EVAL error_pct = ROUND(100.0 * errors / total, 2)
   | KEEP error_pct
 web_pods: |
-  FROM traces-*.otel-*
+  FROM traces-generic.otel-*
   | WHERE @timestamp > NOW() - 2 minutes AND service.name == "web"
   | STATS pods = COUNT_DISTINCT(container.id)
 web_req_by_node: |
-  FROM traces-*.otel-*
+  FROM traces-generic.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
     AND NOT http.user_agent LIKE "kube-probe*" AND k8s.node.name IS NOT NULL
   | STATS requests = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
 web_lat_by_route: |
-  FROM traces-*.otel-*
+  FROM traces-generic.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
     AND NOT http.user_agent LIKE "kube-probe*"
   | STATS p95_ms = PERCENTILE(duration, 95) / 1000000 BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), http.route
 web_routes: |
-  FROM traces-*.otel-*
+  FROM traces-generic.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
   | STATS requests = COUNT(*),
           p50_ms = ROUND(PERCENTILE(duration, 50) / 1000000, 1),
@@ -137,7 +142,7 @@ web_routes: |
   | KEEP route, method, requests, p50_ms, p95_ms, errors_5xx
   | SORT requests DESC
 web_nodes: |
-  FROM traces-*.otel-*
+  FROM traces-generic.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
     AND NOT http.user_agent LIKE "kube-probe*" AND k8s.node.name IS NOT NULL
   | STATS requests = COUNT(*), p95_ms = ROUND(PERCENTILE(duration, 95) / 1000000, 1), pods = COUNT_DISTINCT(container.id)
@@ -160,6 +165,7 @@ pipe_queue_kpi: |
   | WHERE @timestamp > NOW() - 2 minutes AND exporter == "elasticsearch/elastic" AND otelcol_exporter_queue_size IS NOT NULL
   | STATS queue = LAST(otelcol_exporter_queue_size, @timestamp), capacity = LAST(otelcol_exporter_queue_capacity, @timestamp)
 pipe_changes_kpi: |
+  SET unmapped_fields = "nullify";
   FROM logs-netops.changes-*
   | WHERE @timestamp > NOW() - 24 hours
   | STATS deploys_24h = COUNT(*)
@@ -185,6 +191,7 @@ pipe_last_seen: |
   | KEEP device, last_seen, age_s
   | SORT age_s DESC
 pipe_changes: |
+  SET unmapped_fields = "nullify";
   FROM logs-netops.changes-*
   | SORT @timestamp DESC
   | KEEP @timestamp, git.message, git.author, event.outcome, netops.changed_devices, git.sha
@@ -198,6 +205,7 @@ lnk_down_now: |
   | STATS ports_down = SUM(CASE(up == 0, 1, 0))
   | EVAL ports_down = COALESCE(ports_down, 0)
 lnk_down_events: |
+  SET unmapped_fields = "nullify";
   FROM logs-gnmi.state.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "if-state"
     AND state.oper_status == "DOWN"
@@ -209,10 +217,12 @@ lnk_flapping: |
       BY host.name, interface_name
   | STATS ports_flapped = SUM(CASE(t > 0, 1, 0))
 lnk_withdrawn: |
+  SET unmapped_fields = "nullify";
   FROM logs-gnmi.state.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "aft" AND op == "delete"
   | STATS routes_withdrawn = COUNT(*)
 lnk_events_ts: |
+  SET unmapped_fields = "nullify";
   FROM logs-gnmi.state.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
     AND `subscription-name` == "if-state" AND state.oper_status IS NOT NULL
@@ -224,6 +234,7 @@ lnk_ports_down_ts: |
   | STATS up = MIN(net.if.oper_status) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name, interface_name
   | STATS ports_down = SUM(CASE(up == 0, 1, 0)) BY time
 lnk_failures: |
+  SET unmapped_fields = "nullify";
   FROM logs-gnmi.state.otel-*
   | WHERE (@timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "if-state"
            AND state.oper_status IS NOT NULL)
@@ -240,6 +251,7 @@ lnk_failures: |
   | KEEP device, interface, far_end, state_now, downs, first_down, last_up, down_s
   | SORT state_now, first_down DESC
 lnk_event_log: |
+  SET unmapped_fields = "nullify";
   FROM logs-gnmi.state.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
     AND ((`subscription-name` == "if-state" AND state.oper_status IS NOT NULL)
@@ -261,53 +273,368 @@ lnk_traffic: |
   | WHERE mbps >= 0.5
   | KEEP time, port, mbps
 lnk_routes_withdrawn: |
+  SET unmapped_fields = "nullify";
   FROM logs-gnmi.state.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "aft" AND op == "delete"
   | STATS withdrawn = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name
 lnk_bgp_changes: |
+  SET unmapped_fields = "nullify";
   FROM logs-gnmi.state.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "bgp-state"
     AND state.session_state IS NOT NULL
   | KEEP @timestamp, host.name, `network-instance_name`, `neighbor_neighbor-address`, state.session_state
   | SORT @timestamp DESC
   | LIMIT 50
+pipe_kafka_lag_kpi: |
+  FROM metrics-otelcol.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND otelcol_kafka_receiver_offset_lag IS NOT NULL
+  | STATS lag = LAST(otelcol_kafka_receiver_offset_lag, @timestamp) BY topic, partition
+  | STATS kafka_lag = SUM(lag)
+pipe_kafka_lag: |
+  FROM metrics-otelcol.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND otelcol_kafka_receiver_offset_lag IS NOT NULL
+  | STATS lag = MAX(otelcol_kafka_receiver_offset_lag) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), topic, partition
+  | STATS messages_behind = SUM(lag) BY time, topic
+pipe_docs_by_stream: |
+  FROM metrics-*.otel-*, traces-generic.otel-*, logs-*.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND data_stream.dataset != "agent_builder.otel"
+  | STATS docs = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), stream = CONCAT(data_stream.type, "-", data_stream.dataset)
 
-# ---- Fault impact (one timeline across network, routing and the app; telemetry only)
-imp_bgp_down_now: |
+# ---- Overview (one pane of glass: is anything wrong, and in which layer?)
+ovr_status: |
+  FROM traces-generic.otel-*, metrics-k8s.cluster.otel-*, metrics-gnmi.otel-*, metrics-otelcol.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes
+  | STATS web_req = COUNT(*) WHERE service.name == "web" AND kind == "Server" AND NOT http.user_agent LIKE "kube-probe*",
+          web_5xx = COUNT(*) WHERE service.name == "web" AND kind == "Server" AND http.status_code >= 500,
+          web_p95 = PERCENTILE(duration, 95) WHERE service.name == "web" AND kind == "Server" AND NOT http.user_agent LIKE "kube-probe*",
+          nodes = COUNT_DISTINCT(k8s.node.name) WHERE k8s.node.condition_ready IS NOT NULL,
+          nodes_not_ready = COUNT_DISTINCT(k8s.node.name) WHERE k8s.node.condition_ready == 0,
+          web_avail = MIN(k8s.deployment.available) WHERE k8s.deployment.name == "web",
+          web_desired = MAX(k8s.deployment.desired) WHERE k8s.deployment.name == "web",
+          deploy_short = COUNT_DISTINCT(k8s.deployment.name) WHERE k8s.deployment.available < k8s.deployment.desired,
+          ds_short = COUNT_DISTINCT(k8s.daemonset.name) WHERE k8s.daemonset.ready_nodes < k8s.daemonset.desired_scheduled_nodes,
+          switches = COUNT_DISTINCT(host.name) WHERE net.if.in_octets IS NOT NULL AND @timestamp > NOW() - 1 minute,
+          bgp_docs = COUNT(*) WHERE net.bgp.session_state IS NOT NULL AND @timestamp > NOW() - 1 minute,
+          bgp_bad = COUNT(*) WHERE net.bgp.session_state < 6 AND @timestamp > NOW() - 1 minute,
+          ports_down = COUNT(*) WHERE net.if.oper_status == 0 AND @timestamp > NOW() - 1 minute,
+          queue = MAX(otelcol_exporter_queue_size) WHERE exporter == "elasticsearch/elastic"
+  | EVAL err_pct = CASE(web_req > 0, 100.0 * web_5xx / web_req, 0.0), p95_ms = COALESCE(web_p95, 0) / 1000000,
+         web_avail = COALESCE(web_avail, 0), web_desired = COALESCE(web_desired, 0), queue = COALESCE(queue, 0)
+  | EVAL layer = ["1 Web", "2 Kubernetes", "3 Network", "4 Telemetry"]
+  | MV_EXPAND layer
+  | EVAL status = CASE(
+           layer == "1 Web", CASE(web_req == 0 OR err_pct > 50, "DOWN", err_pct > 1 OR p95_ms > 500, "DEGRADED", "OK"),
+           layer == "2 Kubernetes", CASE(nodes == 0 OR web_avail == 0, "DOWN",
+                                         nodes_not_ready > 0 OR web_avail < web_desired OR deploy_short > 0 OR ds_short > 0, "DEGRADED", "OK"),
+           layer == "3 Network", CASE(switches == 0 OR bgp_bad * 2 > bgp_docs, "DOWN",
+                                      switches < 14 OR bgp_bad > 0 OR ports_down > 0, "DEGRADED", "OK"),
+           CASE(switches == 0, "DOWN", switches < 14 OR queue > 0, "DEGRADED", "OK")),
+         detail = CASE(
+           layer == "1 Web", CONCAT(TO_STRING(ROUND(web_req / 2.0)), " req/min, ", TO_STRING(ROUND(err_pct, 2)), "% 5xx, p95 ", TO_STRING(ROUND(p95_ms)), " ms"),
+           layer == "2 Kubernetes", CONCAT(TO_STRING(nodes - nodes_not_ready), "/", TO_STRING(nodes), " nodes ready, web ", TO_STRING(web_avail), "/", TO_STRING(web_desired),
+                                           ", workloads short: ", TO_STRING(deploy_short + ds_short)),
+           layer == "3 Network", CONCAT(TO_STRING(switches), "/14 switches, BGP samples not established: ", TO_STRING(bgp_bad), ", port-down samples: ", TO_STRING(ports_down)),
+           CONCAT(TO_STRING(switches), "/14 switches streaming, export queue ", TO_STRING(queue)))
+  | EVAL layer = SUBSTRING(layer, 3)
+  | KEEP layer, status, detail
+ovr_web_ts: |
+  FROM traces-generic.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*"
+  | STATS requests = COUNT(*), errors_5xx = COUNT(*) WHERE http.status_code >= 500
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend)
+ovr_web_p95_ts: |
+  FROM traces-generic.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*"
+  | STATS p95_ms = ROUND(PERCENTILE(duration, 95) / 1000000, 1) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend)
+ovr_k8s_ts: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | STATS web_pods_available = MIN(k8s.deployment.available) WHERE k8s.deployment.name == "web",
+          nodes_ready = COUNT_DISTINCT(k8s.node.name) WHERE k8s.node.condition_ready == 1
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend)
+ovr_net_ts: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND (net.bgp.session_state IS NOT NULL OR net.if.oper_status IS NOT NULL)
+  | EVAL session = CONCAT(host.name, " ", `network-instance_name`, " ", `neighbor_neighbor-address`),
+         port = CONCAT(host.name, " ", interface_name)
+  | STATS bgp_not_established = COUNT_DISTINCT(session) WHERE net.bgp.session_state < 6,
+          ports_down = COUNT_DISTINCT(port) WHERE net.if.oper_status == 0
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend)
+ovr_changes: |
+  SET unmapped_fields = "nullify";
+  FROM logs-netops.changes-*, logs-netops.drift-*, logs-gnmi.state.otel-*, logs-k8s.events.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+    AND (data_stream.dataset IN ("netops.changes", "netops.drift")
+      OR (data_stream.dataset == "gnmi.state.otel" AND `subscription-name` == "bgp-state" AND `neighbor_neighbor-address` IS NOT NULL)
+      OR (data_stream.dataset == "gnmi.state.otel" AND `subscription-name` == "if-state" AND interface_name IS NOT NULL)
+      OR (data_stream.dataset == "k8s.events.otel" AND severity_text == "Warning"))
+  | EVAL layer = CASE(data_stream.dataset == "k8s.events.otel", "Kubernetes", data_stream.dataset == "gnmi.state.otel", "Network", "Change"),
+         source = COALESCE(host.name, k8s.object.name),
+         what = CASE(data_stream.dataset == "netops.changes", CONCAT("deploy ", COALESCE(event.outcome, ""), ": ", COALESCE(git.message, "")),
+                     data_stream.dataset == "netops.drift", CONCAT("drift check: ", COALESCE(event.outcome, ""), ", devices drifted: ", COALESCE(TO_STRING(netops.drift.device_count), "0")),
+                     data_stream.dataset == "k8s.events.otel", CONCAT(COALESCE(k8s.event.reason, ""), ": ", COALESCE(body.text, "")),
+                     `subscription-name` == "bgp-state", CONCAT("BGP ", COALESCE(`network-instance_name`, ""), " ", COALESCE(`neighbor_neighbor-address`, ""), " ", COALESCE(state.session_state, op)),
+                     CONCAT("port ", COALESCE(interface_name, ""), " ", COALESCE(state.oper_status, op)))
+  | WHERE NOT (data_stream.dataset == "netops.drift" AND event.outcome == "in_sync")
+  | KEEP @timestamp, layer, source, what
+  | SORT @timestamp DESC
+  | LIMIT 50
+
+# ---- Kubernetes (metrics-k8s.cluster: state; metrics-k8s.kubelet: usage; logs-k8s.*: events and container logs)
+k8s_nodes_ready: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND k8s.node.condition_ready IS NOT NULL
+  | STATS ready = LAST(k8s.node.condition_ready, @timestamp) BY k8s.node.name
+  | STATS nodes_ready = SUM(ready), nodes = COUNT(*)
+k8s_cp_ready: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND k8s.node.condition_ready IS NOT NULL AND k8s.node.name LIKE "*-k8s-cp*"
+  | STATS ready = LAST(k8s.node.condition_ready, @timestamp) BY k8s.node.name
+  | STATS control_plane_ready = SUM(ready), control_plane = COUNT(*)
+k8s_workloads_short: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND (k8s.deployment.desired IS NOT NULL OR k8s.daemonset.desired_scheduled_nodes IS NOT NULL)
+  | EVAL workload = COALESCE(k8s.deployment.name, k8s.daemonset.name),
+         short = CASE(k8s.deployment.desired IS NOT NULL, k8s.deployment.available < k8s.deployment.desired,
+                      k8s.daemonset.ready_nodes < k8s.daemonset.desired_scheduled_nodes)
+  | STATS short = LAST(short, @timestamp) BY k8s.namespace.name, workload
+  | STATS workloads_short = SUM(CASE(short, 1, 0)), workloads = COUNT(*)
+k8s_web_avail: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND k8s.deployment.name == "web" AND k8s.namespace.name == "prod"
+  | STATS web_available = LAST(k8s.deployment.available, @timestamp), web_desired = LAST(k8s.deployment.desired, @timestamp)
+k8s_restarts_kpi: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp > NOW() - 15 minutes AND k8s.container.restarts IS NOT NULL
+  | STATS r = MAX(k8s.container.restarts) - MIN(k8s.container.restarts) BY k8s.pod.name, k8s.container.name
+  | STATS restarts_15m = SUM(r)
+k8s_pods_not_running: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND k8s.pod.phase IS NOT NULL
+  | STATS phase = LAST(k8s.pod.phase, @timestamp) BY k8s.pod.name
+  | STATS pods_not_running = SUM(CASE(phase != 2 AND phase != 3, 1, 0)), pods = COUNT(*)
+k8s_nodes: |
+  FROM metrics-k8s.cluster.otel-*, metrics-k8s.kubelet.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND k8s.node.name IS NOT NULL
+  | STATS ready = LAST(k8s.node.condition_ready, @timestamp) WHERE k8s.node.condition_ready IS NOT NULL,
+          memory_pressure = MAX(k8s.node.condition_memory_pressure),
+          disk_pressure = MAX(k8s.node.condition_disk_pressure),
+          pid_pressure = MAX(k8s.node.condition_pid_pressure),
+          cpus = MAX(k8s.node.allocatable_cpu),
+          cpu_cores = MAX(k8s.node.cpu.usage),
+          mem_gb = MAX(k8s.node.memory.working_set) / 1000000000.0,
+          fs_used = MAX(k8s.node.filesystem.usage), fs_cap = MAX(k8s.node.filesystem.capacity)
+      BY node = k8s.node.name
+  | EVAL dc = SUBSTRING(node, 1, 3), role = CASE(node LIKE "*-cp*", "control plane", "worker"),
+         ready = CASE(ready == 1, "yes", ready == 0, "NO", "no data"),
+         pressure = CASE(memory_pressure == 1, "memory", disk_pressure == 1, "disk", pid_pressure == 1, "pid", "none"),
+         cpu_pct = ROUND(100.0 * cpu_cores / cpus, 2), mem_gb = ROUND(mem_gb, 2), fs_pct = ROUND(100.0 * fs_used / fs_cap, 1)
+  | KEEP node, dc, role, ready, pressure, cpu_pct, mem_gb, fs_pct
+  | SORT node
+k8s_cpu_ts: |
+  FROM metrics-k8s.kubelet.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND k8s.node.cpu.usage IS NOT NULL
+  | STATS cpu_cores = AVG(k8s.node.cpu.usage) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+k8s_mem_ts: |
+  FROM metrics-k8s.kubelet.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND k8s.node.memory.working_set IS NOT NULL
+  | STATS mem_gb = ROUND(AVG(k8s.node.memory.working_set) / 1000000000, 2) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+k8s_net_ts: |
+  TS metrics-k8s.kubelet.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | STATS bps = SUM(RATE(k8s.node.network.io)) * 8 BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+  | EVAL mbps = ROUND(bps / 1000000, 3)
+  | KEEP time, k8s.node.name, mbps
+k8s_net_err_ts: |
+  TS metrics-k8s.kubelet.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | STATS errors_per_s = SUM(RATE(k8s.node.network.errors)) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+k8s_pod_phase_ts: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND k8s.pod.phase IS NOT NULL
+  | STATS phase = MAX(k8s.pod.phase) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.pod.name
+  | EVAL phase = CASE(phase == 1, "Pending", phase == 2, "Running", phase == 3, "Succeeded", phase == 4, "Failed", "Unknown")
+  | STATS pods = COUNT(*) BY time, phase
+k8s_workloads: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND (k8s.deployment.desired IS NOT NULL OR k8s.daemonset.desired_scheduled_nodes IS NOT NULL)
+  | EVAL kind = CASE(k8s.deployment.name IS NOT NULL, "Deployment", "DaemonSet"),
+         name = COALESCE(k8s.deployment.name, k8s.daemonset.name),
+         desired = COALESCE(k8s.deployment.desired, k8s.daemonset.desired_scheduled_nodes),
+         ready = COALESCE(k8s.deployment.available, k8s.daemonset.ready_nodes)
+  | STATS desired = LAST(desired, @timestamp), ready = LAST(ready, @timestamp) BY namespace = k8s.namespace.name, kind, name
+  | EVAL ok = CASE(ready >= desired, "yes", "SHORT")
+  | KEEP namespace, kind, name, desired, ready, ok
+  | SORT ok DESC, namespace, name
+k8s_restarts: |
+  FROM metrics-k8s.cluster.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND k8s.container.restarts IS NOT NULL
+  | STATS restarts = MAX(k8s.container.restarts) - MIN(k8s.container.restarts), total = MAX(k8s.container.restarts)
+      BY namespace = k8s.namespace.name, pod = k8s.pod.name, container = k8s.container.name
+  | WHERE restarts > 0
+  | KEEP namespace, pod, container, restarts, total
+  | SORT restarts DESC
+  | LIMIT 20
+k8s_events_ts: |
+  SET unmapped_fields = "nullify";
+  FROM logs-k8s.events.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | EVAL event = CONCAT(COALESCE(severity_text, ""), " ", COALESCE(k8s.event.reason, ""))
+  | STATS events = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), event
+k8s_events: |
+  SET unmapped_fields = "nullify";
+  FROM logs-k8s.events.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | EVAL object = CONCAT(COALESCE(k8s.object.kind, ""), "/", COALESCE(k8s.object.name, ""))
+  | KEEP @timestamp, severity_text, k8s.event.reason, k8s.namespace.name, object, body.text
+  | SORT @timestamp DESC
+  | LIMIT 50
+k8s_logs_ts: |
+  FROM logs-k8s.container.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+  | EVAL level = CASE(exception.type IS NOT NULL OR body.text LIKE "*ERROR*" OR body.text LIKE "*Traceback*", "error",
+                      body.text LIKE "*WARN*", "warning", "info")
+  | STATS lines = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), stream = CONCAT(k8s.namespace.name, " ", level)
+k8s_log_errors: |
+  FROM logs-k8s.container.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
+    AND (exception.type IS NOT NULL OR body.text LIKE "*ERROR*" OR body.text LIKE "*Traceback*" OR body.text LIKE "*WARN*")
+  | KEEP @timestamp, k8s.namespace.name, k8s.pod.name, k8s.container.name, body.text
+  | SORT @timestamp DESC
+  | LIMIT 50
+
+# ---- Web app, more (one web pod per Kubernetes node: the node names the pod; dc = first 3 letters of the node)
+web_active: |
+  FROM metrics-generic.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND http.server.active_requests IS NOT NULL
+  | STATS a = LAST(http.server.active_requests, @timestamp) BY k8s.node.name
+  | STATS active_requests = SUM(a)
+web_red_ts: |
+  FROM traces-generic.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*"
+  | EVAL status = CASE(http.status_code >= 500, "5xx", http.status_code >= 400, "4xx", http.status_code >= 200, "2xx/3xx", "no status")
+  | STATS requests = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), status
+web_req_by_dc: |
+  FROM traces-generic.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*" AND k8s.node.name IS NOT NULL
+  | STATS requests = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), dc = SUBSTRING(k8s.node.name, 1, 3)
+web_p95_by_node: |
+  FROM traces-generic.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*" AND k8s.node.name IS NOT NULL
+  | STATS p95_ms = ROUND(PERCENTILE(duration, 95) / 1000000, 1) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+web_cpu_ts: |
+  FROM metrics-generic.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND process.runtime.cpython.cpu.utilization IS NOT NULL
+  | STATS cpu_pct = ROUND(100 * AVG(process.runtime.cpython.cpu.utilization), 2) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+web_mem_ts: |
+  FROM metrics-generic.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND process.runtime.cpython.memory IS NOT NULL AND type == "rss"
+  | STATS rss_mb = ROUND(MAX(process.runtime.cpython.memory) / 1000000, 1) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+web_slowest: |
+  FROM traces-generic.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
+    AND NOT http.user_agent LIKE "kube-probe*"
+  | EVAL ms = ROUND(duration / 1000000, 1)
+  | SORT ms DESC
+  | KEEP @timestamp, http.route, http.status_code, k8s.node.name, ms, trace.id
+  | LIMIT 20
+web_log_errors: |
+  FROM logs-k8s.container.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND k8s.namespace.name == "prod" AND k8s.container.name == "web"
+    AND (exception.type IS NOT NULL OR body.text LIKE "*ERROR*" OR body.text LIKE "*Traceback*" OR body.text LIKE "*\" 5?? *")
+  | EVAL what = COALESCE(exception.type, SUBSTRING(body.text, 1, 120))
+  | STATS lines = COUNT(*), last_seen = MAX(@timestamp) BY what
+  | SORT lines DESC
+  | LIMIT 20
+
+# ---- Routing & WAN (gNMI BGP state and prefixes; AFT route log; BMP from the WAN routers wan1 / wan2)
+# BGP session type, from the peer: 10.255.10.x WAN VRF PROD, 10.255.x WAN underlay, other PROD peers the
+# Kubernetes nodes (Cilium), the rest loopbacks (EVPN overlay).
+rte_bgp_by_type: |
   FROM metrics-gnmi.otel-*
   | WHERE @timestamp > NOW() - 2 minutes AND net.bgp.session_state IS NOT NULL
-  | STATS s = LAST(net.bgp.session_state, @timestamp)
-      BY host.name, `network-instance_name`, `neighbor_neighbor-address`
-  | STATS bgp_not_established = SUM(CASE(s < 6, 1, 0))
-  | EVAL bgp_not_established = COALESCE(bgp_not_established, 0)
-imp_route_changes_5m: |
-  FROM logs-gnmi.state.otel-*
-  | WHERE @timestamp > NOW() - 5 minutes AND `subscription-name` == "aft"
-  | STATS route_changes_5m = COUNT(*)
-imp_events_ts: |
-  FROM logs-gnmi.state.otel-*
-  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend
-  | EVAL event = CONCAT(`subscription-name`, " ", op)
-  | STATS events = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), event
-imp_bgp_down_ts: |
+  | STATS s = LAST(net.bgp.session_state, @timestamp) BY host.name, vrf = `network-instance_name`, peer = `neighbor_neighbor-address`
+  | EVAL type = CASE(peer LIKE "10.255.10.*", "WAN VRF PROD", peer LIKE "10.255.*", "WAN underlay",
+                     vrf == "PROD", "Kubernetes (Cilium)", "EVPN overlay")
+  | STATS established = SUM(CASE(s == 6, 1, 0)), sessions = COUNT(*) BY type
+  | EVAL ok = CASE(established == sessions, "yes", "NO")
+  | KEEP type, established, sessions, ok
+  | SORT type
+rte_bgp_type_ts: |
   FROM metrics-gnmi.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND net.bgp.session_state IS NOT NULL
   | STATS s = MIN(net.bgp.session_state)
-      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name, `network-instance_name`, `neighbor_neighbor-address`
-  | STATS sessions_not_established = SUM(CASE(s < 6, 1, 0)) BY time
-imp_route_changes_ts: |
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name, vrf = `network-instance_name`, peer = `neighbor_neighbor-address`
+  | EVAL type = CASE(peer LIKE "10.255.10.*", "WAN VRF PROD", peer LIKE "10.255.*", "WAN underlay",
+                     vrf == "PROD", "Kubernetes (Cilium)", "EVPN overlay")
+  | STATS not_established = SUM(CASE(s < 6, 1, 0)) BY time, type
+rte_wan_sessions: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp > NOW() - 2 minutes AND net.bgp.session_state IS NOT NULL AND `neighbor_neighbor-address` LIKE "10.255.*"
+  | STATS s = LAST(net.bgp.session_state, @timestamp) BY bgw = host.name, vrf = `network-instance_name`, peer = `neighbor_neighbor-address`
+  | EVAL state = CASE(s == 6, "ESTABLISHED", s == 1, "IDLE", s == 2, "CONNECT", s == 3, "ACTIVE", s == 4, "OPENSENT", s == 5, "OPENCONFIRM", "UNKNOWN")
+  | KEEP bgw, vrf, peer, state
+  | SORT bgw, vrf, peer
+rte_wan_prefixes_ts: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND net.bgp.prefixes.received IS NOT NULL
+    AND `neighbor_neighbor-address` LIKE "10.255.*" AND `afi-safi_afi-safi-name` == "IPV4_UNICAST"
+  | STATS received = MAX(net.bgp.prefixes.received)
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name, vrf = `network-instance_name`, `neighbor_neighbor-address`
+  | STATS prefixes = SUM(received) BY time, bgw_vrf = CONCAT(host.name, " ", vrf)
+rte_k8s_prefixes_ts: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND net.bgp.prefixes.received IS NOT NULL
+    AND `network-instance_name` == "PROD" AND host.name LIKE "*leaf*" AND `afi-safi_afi-safi-name` == "IPV4_UNICAST"
+  | STATS received = MAX(net.bgp.prefixes.received)
+      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name, `neighbor_neighbor-address`
+  | STATS vip_prefixes = SUM(received) BY time, host.name
+rte_ospf_ts: |
+  FROM metrics-gnmi.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND net.ospf.lsa_count IS NOT NULL
+  | STATS lsas = MAX(net.ospf.lsa_count) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name
+rte_aft_public: |
+  SET unmapped_fields = "nullify";
   FROM logs-gnmi.state.otel-*
   | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND `subscription-name` == "aft"
-  | STATS route_changes = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), host.name
-imp_web_ts: |
-  FROM traces-*.otel-*
-  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
-    AND NOT http.user_agent LIKE "kube-probe*"
-  | STATS p95_ms = PERCENTILE(duration, 95) / 1000000,
-          errors_5xx = SUM(CASE(http.status_code >= 500, 1, 0))
-      BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend)
-imp_web_rpm_ts: |
-  FROM traces-*.otel-*
-  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND service.name == "web" AND kind == "Server"
-    AND NOT http.user_agent LIKE "kube-probe*" AND k8s.node.name IS NOT NULL
-  | STATS requests = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), k8s.node.name
+    AND (`ipv4-entry_prefix` LIKE "192.0.2.*" OR `ipv4-entry_prefix` LIKE "198.51.100.*" OR `ipv4-entry_prefix` LIKE "203.0.113.*")
+  | KEEP @timestamp, host.name, `network-instance_name`, op, `ipv4-entry_prefix`, state.origin_protocol, state.next_hop_group
+  | SORT @timestamp DESC
+  | LIMIT 50
+rte_bmp_ts: |
+  FROM logs-bgp.bmp.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND bmp_msg_type == "route_monitor"
+  | STATS messages = COUNT(*) BY time = BUCKET(@timestamp, 50, ?_tstart, ?_tend), what = CONCAT(host.name, " ", log_type)
+rte_bmp_routes: |
+  FROM logs-bgp.bmp.otel-*
+  | WHERE @timestamp > NOW() - 24 hours AND bmp_msg_type == "route_monitor" AND bmp_rib_type == "Loc-Rib"
+  | STATS last_seen = MAX(@timestamp), update = LAST(log_type, @timestamp), as_path = LAST(as_path, @timestamp)
+      BY wan = host.name, prefix = ip_prefix
+  | EVAL in_table = CASE(update == "withdraw", "WITHDRAWN", "yes"), origin_as = MV_LAST(SPLIT(as_path, " "))
+  | KEEP wan, prefix, in_table, as_path, origin_as, last_seen
+  | SORT last_seen DESC
+  | LIMIT 100
+rte_bmp_log: |
+  FROM logs-bgp.bmp.otel-*
+  | WHERE @timestamp >= ?_tstart AND @timestamp <= ?_tend AND bmp_msg_type == "route_monitor"
+  | KEEP @timestamp, host.name, log_type, bmp_rib_type, ip_prefix, as_path, peer_ip
+  | SORT @timestamp DESC
+  | LIMIT 50
+ovr_slo: |
+  SET unmapped_fields = "nullify";
+  FROM .slo-observability.summary-v3*
+  | WHERE spaceId == "netops"
+  | STATS name = LAST(slo.name, summaryUpdatedAt), tags = LAST(slo.tags, summaryUpdatedAt), status = LAST(status, summaryUpdatedAt),
+          sli = LAST(sliValue, summaryUpdatedAt), target = LAST(slo.objective.target, summaryUpdatedAt),
+          budget = LAST(errorBudgetRemaining, summaryUpdatedAt)
+      BY slo.id, slo.instanceId
+  | EVAL slo = TO_STRING(name), layer = tags, sli_pct = ROUND(sli * 100, 3), objective_pct = ROUND(target * 100, 2),
+         budget_left_pct = ROUND(budget * 100, 1),
+         rank = CASE(status == "VIOLATED", 0, status == "DEGRADING", 1, status == "NO_DATA", 2, 3)
+  | SORT rank, layer, slo
+  | KEEP slo, layer, status, sli_pct, objective_pct, budget_left_pct

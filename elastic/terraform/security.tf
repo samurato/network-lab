@@ -45,6 +45,7 @@ locals {
             "logs-k8s.*.otel-*",
             "logs-netops.*-*",
             "kb-*",
+            ".slo-observability.*",
           ]
           privileges = ["read", "view_index_metadata"]
         },
@@ -57,6 +58,7 @@ locals {
             "feature_actions.read",
             "feature_discover_v2.read",
             "feature_dashboard_v2.read",
+            "feature_slo.read",
           ]
           resources = [
             "space:default",

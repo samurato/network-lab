@@ -201,64 +201,101 @@ other work in the same project. The lab never writes to them.
 | File | Holds |
 |---|---|
 | `main.tf` | provider (`elastic/elasticstack ~> 0.16`), local backend |
-| `data-streams.tf` | one index template per lab metrics dataset. Each reuses Elasticsearch's built-in `metrics-otel@template` as-is (read live through a data source, so Elastic upgrades carry through) and adds a retention |
-| `security.tf` | the lab key's role descriptor (output `lab_api_key_role_descriptors`) |
-| `kibana.tf` | Kibana space `netops` and data views: fabric telemetry, app traces, change events, collector health |
-| `dashboards.tf` + `dashboards/queries.yml` | the three dashboards below; every panel is an ES\|QL chart, and every query lives in `queries.yml` |
+| `data-streams.tf` | one index template per lab dataset (metrics and logs). Each reuses Elasticsearch's built-in `metrics-otel@template` as-is (read live through a data source, so Elastic upgrades carry through) and adds a retention |
+| `security.tf` | the role descriptors of the lab key and the SRE agent key (outputs `lab_api_key_role_descriptors`, `sre_agent_role_descriptors`) |
+| `kibana.tf` | Kibana space `netops` and data views: fabric telemetry and state, app traces, Kubernetes metrics and logs, WAN BMP, change events, drift, collector health |
+| `dashboards-layers.tf`, `dashboards.tf`, `dashboards-faults.tf` + `dashboards/queries.yml` | the dashboards below; every panel is an ES\|QL chart, and every query lives in `queries.yml` |
+| `slo.tf` | the service level objectives, one set per layer |
 
 | Command | Does |
 |---|---|
 | `make elastic-plan` / `automation/elastic plan` | Terraform plan |
 | `make elastic` / `automation/elastic apply` | Terraform apply |
 | `automation/elastic role` | prints the lab key's role descriptor |
+| `automation/elastic sre-role` | prints the SRE agent key's role descriptor |
+| `automation/elastic queries [prefix ...]` | runs every dashboard query against Elastic, read-only, and fails on any ES\|QL error |
 | `automation/elastic gh-secrets` | copies the CI settings into the repository secrets (owner only) |
 | `automation/elastic output` | Terraform outputs |
 
 - **Auth.** The wrapper passes `ELASTIC_ES_URL`, `ELASTIC_KIBANA_URL` and `ELASTIC_TF_API_KEY` to the provider as
   `ELASTICSEARCH_ENDPOINTS`, `ELASTICSEARCH_API_KEY`, `KIBANA_ENDPOINT` and `KIBANA_API_KEY`. No credential is in
   a `.tf` file or on a command line.
-- **State.** `~/.local/share/netops/terraform-elastic.tfstate` on the lab host. Unlike the Kubernetes state it
+- **State.** `~/.local/share/netops/terraform-elastic-<project>.tfstate` on the lab host, one per Elastic
+  project (named after the first label of `ELASTIC_ES_URL`'s host), so switching projects starts clean. Unlike the Kubernetes state it
   is not in the lab directory: Elastic outlives `make down`.
 - **Who applies.** For now, the lab host owner runs `make elastic` after merging a change under `elastic/`. CI
   doesn't apply it, because the admin key stays off GitHub.
 
-Later roadmap steps add lookup indices, transforms, rules, SLOs and dashboards here
+Later roadmap steps add lookup indices, transforms and alert rules here
 ([observability-roadmap.md](observability-roadmap.md)).
 
 ---
 
 ## 7. Dashboards
 
-In Kibana, open the **NetOps lab** space, then Dashboards:
+In Kibana, open the **NetOps lab** space, then Dashboards. Start at the Overview; every dashboard has the same
+links bar along the top.
+
+```
+NetOps · Overview              is anything wrong, and in which layer?
+ ├─ NetOps · Web               the app
+ ├─ NetOps · Kubernetes        the platform it runs on
+ ├─ NetOps · Network           the fabric
+ │    ├─ NetOps · Link failures
+ │    └─ NetOps · Routing & WAN
+ └─ NetOps · Telemetry pipeline  can the data be trusted?
+```
 
 | Dashboard | ID | Shows |
 |---|---|---|
-| NetOps · Fabric health | `netops-fabric` | switches reporting, BGP sessions established, ports down, fabric traffic; traffic and BGP prefixes per switch over time; tables for BGP sessions not established, ports down, busiest ports, errors/discards/flaps, LLDP neighbours, state changes (routes, BGP, ports, VTEPs, MACs; `logs-gnmi.state`) |
-| NetOps · Web app | `netops-web` | requests per minute, p95 latency, 5xx rate, pods reporting; requests per Kubernetes node and p95 latency per route over time; per-route and per-node tables |
-| NetOps · Pipeline & changes | `netops-pipeline` | gNMI docs per minute, switches silent for over 60 s, collector export queue, deploys in 24 h; docs per switch, collector throughput and queue over time; last data per switch; GitOps change events |
+| NetOps · Overview | `netops-overview` | status per layer now (OK / DEGRADED / DOWN with the reason), the SLOs and their error budget, four key numbers per layer, one timeline across the layers (web requests, 5xx and p95; web pods and nodes ready; BGP not established and ports down; collector throughput and Kafka lag), what changed (deploys, drift, BGP and port changes, Kubernetes warnings) |
+| NetOps · Web | `netops-web` | requests per minute, p95, 5xx rate, requests in flight, pods reporting and available; requests by status, data centre and node; p95 by route and node; Python CPU and memory per pod; routes and nodes tables; slowest requests with trace IDs; app errors from the logs |
+| NetOps · Kubernetes | `netops-kubernetes` | nodes and control plane ready, web pods, workloads short of replicas, pods not running, restarts; per-node table (ready, pressure, CPU, memory, disk); CPU, memory and network per node; pod phases; events by reason; workloads desired vs ready; restarts; container log lines by level, events and warning lines |
+| NetOps · Network | `netops-fabric` | switches reporting, BGP sessions established, ports down, fabric traffic; traffic and BGP prefixes per switch over time; tables for BGP sessions not established, ports down, busiest ports, errors/discards/flaps, LLDP neighbours, state changes (routes, BGP, ports, VTEPs, MACs; `logs-gnmi.state`) |
 | NetOps · Link failures | `netops-links` | ports down now, port-down events, ports that flapped, routes withdrawn; port DOWN/UP events and ports down over time; failed links with both ends (LLDP far end), down and up times and duration; traffic per port (moving to the surviving links); routes withdrawn per switch; errors and flaps; port/LLDP and BGP event logs |
-| NetOps · Fault impact | `netops-impact` | one time axis across layers: ports down, BGP not established, route changes, web 5xx now; state changes by type; ports down and BGP sessions down over time; route changes and traffic per switch; web requests per node, p95 and 5xx; what changed; deploys |
+| NetOps · Routing & WAN | `netops-routing` | BGP sessions by type (EVPN overlay, WAN underlay, WAN VRF PROD, Kubernetes) now and over time; WAN sessions and prefixes per border gateway; Kubernetes VIPs per leaf; OSPF LSAs; fabric route changes for the public prefixes; the WAN routers' updates, withdraws and best routes over BMP |
+| NetOps · Telemetry pipeline | `netops-pipeline` | gNMI docs per minute, switches silent for over 60 s, collector export queue, deploys in 24 h; docs per switch, collector throughput and queue over time; last data per switch; GitOps change events; Kafka consumer lag; documents per data stream |
 
-Keys and who uses them:
+**SLOs** (`slo.tf`, Observability → SLOs in the NetOps space, and the table on the Overview). Rolling 7 days:
+
+| Layer | SLO | Good when | Target |
+|---|---|---|---|
+| web | Web availability | a request (kube-probe excluded) is not a 5xx | 99.5 % of requests |
+| web | Web latency under 500 ms | a request takes under 500 ms | 99 % of requests |
+| web | Web is serving traffic | a minute has at least 100 requests (normal: about 600) | 99 % of minutes |
+| kubernetes | Web pods available | every desired web replica is available | 99 % of minutes |
+| kubernetes | Kubernetes nodes ready | every node is Ready | 99 % of minutes |
+| network | BGP sessions established | every BGP session is established | 99 % of minutes |
+| network | Switches streaming telemetry | all 14 switches send counters | 99 % of minutes |
+| network | Fabric ports up | no cabled port is down | 99 % of minutes |
+
+### API keys
+
 
 - The **lab key** writes only the lab's data streams (`metrics-*.otel-*`, `traces-*.otel-*`, `logs-*.otel-*`,
   `logs-netops.*`) and reads them back for `make verify`. Print its role with `automation/elastic role`.
 - The **SRE agent key** is read-only: the lab's metrics, the `web` traces (`traces-generic.otel-*`), the
-  `logs-gnmi.*`, `logs-bgp.*`, `logs-k8s.*` and `logs-netops.*` streams, the knowledge base (`kb-*`), and
-  Discover / Dashboards / Agent Builder in the default and NetOps spaces. Print its role with
+  `logs-gnmi.*`, `logs-bgp.*`, `logs-k8s.*` and `logs-netops.*` streams, the knowledge base (`kb-*`), the SLO
+  results, and Discover / Dashboards / SLOs / Agent Builder in the default and NetOps spaces. Print its role with
   `automation/elastic sre-role` and create the key in Kibana -> API keys.
 - Kibana Agent Builder runs with its **caller's** privileges. Always call the agent with the SRE agent key (or
   a user with that role), never as an admin.
 - Both roles are allow-lists. Don't widen either to `logs-*` or `traces-*`: other data in the project, such as
   the agent's own conversation traces (`traces-agent_builder`), must stay out of reach.
 
+### Notes
+
 - Tiles and "now" tables use a fixed short window (2 or 5 minutes). Charts follow the time picker through
   `?_tstart` / `?_tend`. Each dashboard refreshes every 30 s.
 - Times show in the viewer's browser timezone (Kibana's default, `Browser`). Serverless doesn't expose the
   advanced-settings API, so this isn't set in code; the lab devices themselves run Australia/Sydney.
 - To change a panel: edit its query in `elastic/terraform/dashboards/queries.yml` (run it in Discover first)
-  or its layout in `dashboards.tf`, then `make elastic-plan` and `make elastic`. Edits made in the Kibana UI are
+  or its layout in `dashboards-layers.tf` (or `dashboards.tf`), check it with `automation/elastic queries`,
+  then `make elastic-plan` and `make elastic`. Edits made in the Kibana UI are
   overwritten by the next apply.
+- Event streams (state changes, Kubernetes events, change events) only get a field in their mapping with the
+  first event that carries it, so their queries start with `SET unmapped_fields = "nullify"`: in a fresh
+  project a panel then shows "nothing yet" instead of an error.
 - **Why `config_json`.** Each panel is written in the Kibana Dashboards API shape (`type`, `title`,
   `data_source: {type: esql, query}`, `metrics` / `rows` / `layers`). The provider's typed chart blocks (0.16)
   send fields this Serverless Kibana rejects (`invalid_union` on `data_source`, `styling`, `legend.placement`).

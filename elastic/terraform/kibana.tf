@@ -17,11 +17,27 @@ locals {
     }
     netops-traces = {
       name  = "App traces"
-      title = "traces-*.otel-*"
+      title = "traces-generic.otel-*"
     }
     netops-changes = {
       name  = "Change events (GitOps deploys)"
       title = "logs-netops.changes-*"
+    }
+    netops-bmp = {
+      name  = "WAN BGP (BMP from wan1, wan2)"
+      title = "logs-bgp.bmp.otel-*"
+    }
+    netops-k8s-metrics = {
+      name  = "Kubernetes metrics"
+      title = "metrics-k8s.*.otel-*"
+    }
+    netops-k8s-logs = {
+      name  = "Kubernetes events and container logs"
+      title = "logs-k8s.*.otel-*"
+    }
+    netops-drift = {
+      name  = "Drift checks"
+      title = "logs-netops.drift-*"
     }
     netops-otelcol = {
       name  = "Lab collector health"
