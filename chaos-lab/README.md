@@ -12,7 +12,7 @@ chaos-lab lives in this repo but is **separate infrastructure**:
 | Framework | [Chaos Toolkit](https://chaostoolkit.org): each experiment is a YAML file with a steady-state hypothesis, a method (inject, hold) and rollbacks, and every run writes a JSON journal |
 | Drivers | `chaoslab/`: small Python modules the experiments call |
 | Health checks | Measured directly on the lab: HTTP from an Internet user, BGP state on every router, web replicas ready. They **never** read Elastic or telemetry. |
-| Ground truth | `~/clab-runs/chaos/runs.jsonl` on the host, also appended to Elastic's `logs-chaos.*` data streams for the Chaos command center, using the lab key. It is the answer key for scoring an agent: the lab key can write `logs-chaos.*` but not read it, and it sits in its own Kibana space. |
+| Ground truth | `~/clab-runs/chaos/runs.jsonl` on the host, and nowhere else. It is the answer key for scoring an agent, so chaos-lab never writes to Elastic: nothing in the project tells an agent that a fault is a test. |
 | Scorecard | After each run, chaos-lab checks Elastic (read-only ES\|QL) for every signal the experiment should produce, and records whether it arrived and how fast. A missing signal is an observability gap. |
 
 **Why not Chaos Monkey:**
@@ -32,8 +32,8 @@ make list                       # the catalogue
 make dry EXP=net-01             # guard + health checks only, nothing injected
 make run EXP=net-01             # inject, hold 5 min, roll back, check recovery
 CHAOSLAB_HOLD=600 make run EXP=hij-01    # a longer fault window
-make run EXP=net-11 PUBLISH=0    # nothing goes to Elastic for this run, now or later
-CHAOSLAB_HOLD=180 make monkey COUNT=5 GAP=120 PUBLISH=0    # Chaos Monkey campaign: 5 random faults in a row
+make report                     # local HTML scorecard of every run: ~/clab-runs/chaos/report.html
+CHAOSLAB_HOLD=180 make monkey COUNT=5 GAP=120    # Chaos Monkey campaign: 5 random faults in a row
 make random                     # Chaos Monkey mode: one random experiment marked "random"
 make status                     # current run, active faults, recent runs
 make stop                       # kill switch: undo every active fault now
@@ -65,30 +65,33 @@ The traffic shows up in Elastic as interface counters (every 10 s) and web trace
 
 A typical session: `make traffic-start`, then `CHAOSLAB_HOLD=180 make run EXP=net-01`, then `make traffic-status` during the hold, then `make traffic-stop`.
 
-## Dashboards in Elastic
+## Dashboards and the scorecard
 
-| Dashboard | Space | Shows |
-|---|---|---|
-| **Chaos · Command center** | Chaos lab (`/s/chaos/app/dashboards#/view/chaos-command-center`) | The fault in progress, every run with its outcome and recovery, the scorecard, coverage per experiment, observability gaps, time to detect, and the chaos timeline |
-| **NetOps · Fault impact** | NetOps | Any fault's symptoms across ports, BGP, routes, EVPN, traffic, web requests, latency and errors, and deploys, on one time axis |
-| **NetOps · Link failures** | NetOps | Each failed link with both ends (LLDP), when, how long, flaps, errors, routes withdrawn, and traffic moving to the surviving links |
+chaos-lab sends nothing to Elastic. The agent, and anyone watching Kibana, sees only the lab's telemetry: the
+NetOps dashboards (Overview, Web, Kubernetes, Network, Link failures, Routing & WAN) show the symptoms of a
+fault the same way they would show a real incident.
 
-The NetOps dashboards show only telemetry, which is what an agent sees. The command center lives in its own space because it holds the answers. To investigate a run, read its time window from the command center, then open Fault impact with that time range.
+The answers stay on the host. `make report` builds `~/clab-runs/chaos/report.html` from `runs.jsonl`: every run
+with its outcome and recovery, the scorecard, coverage per experiment, observability gaps (expected signals that
+never reached Elastic), and the catalogue. Open it from the host, for example
+`scp samrat@192.168.20.56:clab-runs/chaos/report.html .`.
 
-The dashboards are Terraform in `elastic/terraform/` (`dashboards-chaos.tf`, `dashboards-faults.tf`, `chaos.tf`), applied with `make elastic` at the repo root.
+The scorecard reads Elastic read-only (ES|QL with the lab key, `ELASTIC_ES_URL` and `ELASTIC_API_KEY` from the
+git-ignored `automation/elastic.env`).
 
-**Publishing** uses the lab key, `ELASTIC_ES_URL` and `ELASTIC_API_KEY` from the git-ignored `automation/elastic.env`, so there's nothing to set up. Every run publishes as it goes. `make publish` sends the catalogue and any earlier runs.
-
-**Publishing off.** `PUBLISH=0` on any make target (`make run EXP=net-11 PUBLISH=0`, `make traffic-start PUBLISH=0`), or `elastic.publish: false` in `targets.yml` for every run, sends nothing to Elastic: no run, timeline, scorecard or catalogue documents. The run is still recorded in `runs.jsonl`, marked `"publish": false`, so the watchdog's rollback, a re-score or a later `make publish` never send it either. The scorecard still runs: it only reads telemetry from Elastic.
-
-The lab key can write `logs-chaos.*` but not read it, so an agent with that key can't see the answers. Keep it that way: don't widen the lab key's read privileges to `logs-*` (`elastic/terraform/security.tf`).
+Keeping chaos-lab apart from the lab (CI enforces it, `automation/isolation-check.sh`):
+- A PR changes either `chaos-lab/` or the lab, never both. A chaos-lab-only merge doesn't deploy, so no change
+  event (which the agent reads) carries its title.
+- Nothing under `docs/`, `generated/`, `network/` or `elastic/` mentions chaos-lab: those feed the agent's
+  knowledge base and Kibana.
+- Use neutral branch names and commit subjects for lab PRs.
 
 | Command | Does |
 |---|---|
 | `make score [RUN=<run_id>]` | Recompute a run's scorecard (default: the last run) |
 | `make monkey` | Chaos Monkey campaign: `COUNT` (5) random experiments one after another, about `GAP` (120) s apart. Each waits for the lab to be idle (no run, no active fault, no deploy or drift check), never repeats the previous pick, and the campaign stops at the first run that does not recover. Stop it early with Ctrl-C (Chaos Toolkit rolls the current fault back), then `make stop` |
 | `make monkey-dry` | The same campaign with dry runs only |
-| `make publish` | Send the catalogue and every recorded run to Elastic again (safe to repeat) |
+| `make report` | Local HTML scorecard of every run (`~/clab-runs/chaos/report.html`), never sent anywhere |
 
 ## Catalogue
 
@@ -170,7 +173,7 @@ Each experiment's `extensions.expected` lists the symptoms the telemetry should 
 | Path | Content |
 |---|---|
 | `~/clab-runs/chaos/runs.jsonl` | One line per run: id, fault, targets, expected symptoms, what was injected and when, end, status, whether it recovered and how fast, and the scorecard |
-| Elastic `logs-chaos.*` | The same runs, the scorecard rows, a timeline of injections and rollbacks, and the catalogue (Chaos command center). Append-only: a run is a start snapshot plus a final one |
+| `~/clab-runs/chaos/report.html` | The local scorecard (`make report`) |
 | `~/clab-runs/chaos/journals/` | The Chaos Toolkit journal for each run, including evidence probe output such as the hijacked route |
 | `~/clab-runs/chaos/logs/` | Run logs |
 | GitHub `drift` issue | A switch or WAN change shows up as drift within 15 min: a realistic operational signal |
@@ -185,8 +188,8 @@ chaoslab/
   guard.py            safety rules
   state.py            active faults + their undo, ground truth, hold, rollback
   scorecard.py        detection scorecard: did each expected signal reach Elastic, and how fast
-  publish.py          runs, scorecards and the timeline to Elastic (logs-chaos.*)
-  elastic.py          Elastic client (lab key): appends to logs-chaos.* only, reads telemetry with ES|QL
+  report.py           local HTML scorecard (make report)
+  elastic.py          read-only Elastic client (lab key): ES|QL over the telemetry
   watchdog.py         dead man's switch
   eos.py frr.py netem.py k8s.py attacker.py     fault drivers
   probes.py           health checks and evidence (direct, never via telemetry)

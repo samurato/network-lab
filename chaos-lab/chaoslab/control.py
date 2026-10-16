@@ -7,7 +7,7 @@ import logging
 
 from chaoslib.exceptions import InterruptExecution
 
-from chaoslab import config, elastic, guard, probes, publish, scorecard, state, watchdog
+from chaoslab import config, elastic, guard, probes, scorecard, state, watchdog
 
 log = logging.getLogger("chaostoolkit")
 
@@ -33,11 +33,7 @@ def before_experiment_control(context: dict, **kwargs) -> None:
     run = state.start_run(ext, context.get("title", ""))
     deadline = run["hold_seconds"] + int(ext.get("extra_seconds", 0)) + 180
     state.set_watchdog(watchdog.arm(run["run_id"], deadline))
-    publish.catalogue()
-    publish.run(run)
-    publish.event("run.start", run, targets=run["targets"], message=run["title"])
-    log.info(f"chaoslab: run {run['run_id']} started; watchdog rolls back after {deadline}s if still active"
-             f"{'' if run['publish'] else '; publishing to Elastic is off (local only)'}")
+    log.info(f"chaoslab: run {run['run_id']} started; watchdog rolls back after {deadline}s if still active")
 
 
 def after_experiment_control(context: dict, state: dict = None, **kwargs) -> None:
