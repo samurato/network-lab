@@ -115,6 +115,9 @@ def run_inverse(inverse: dict) -> None:
     if kind == "eos_restore":
         from chaoslab import eos
         eos.restore(inverse["node"], inverse["file"])
+    elif kind == "frr_undo":             # FRR config: replay the undo, accept "already gone" (verified)
+        from chaoslab import frr
+        frr.undo(inverse["node"], inverse["argv"], inverse["lines"])
     elif kind == "cmd":
         config.sh(inverse["argv"], timeout=inverse.get("timeout", 120))
     elif kind == "cmds":                 # several commands, in order (e.g. restore a deployment, wait for it)
